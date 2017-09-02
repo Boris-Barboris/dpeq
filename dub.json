@@ -1,0 +1,17 @@
+{
+  "name": "dpeq",
+  "description": "PostgreSQL extended query API wrapper",
+  "license": "MIT",
+  "targetType": "library",
+  "copyright": "Copyright © 2017 Boris-Barboris",
+  "homepage": "https://github.com/dpeq/",
+  "authors": ["Boris-Barboris"],
+  "dependencies":
+  {
+    "vibe-core":
+    {
+      "version": ">=1.1.0",
+      "optional": true
+    }
+  }
+}
