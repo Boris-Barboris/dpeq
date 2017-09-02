@@ -9,23 +9,57 @@ Authors: Boris-Barboris
 module dpeq.connection;
 
 import std.exception: enforce;
-import std.bitmanip: bigEndianToNative;
 import std.conv: to;
 import std.traits;
 import std.range;
-
-//import vibe.core.net: TCPConnection, connectTCP;
-//import vibe.core.stream: IOMode;
 import std.socket;
-
-alias SocketT = Socket;
-
-import vibe.core.log;
 
 import dpeq.constants;
 import dpeq.exceptions;
 import dpeq.type;
 import dpeq.marshalling;
+
+
+
+/// I don't want to care what sockets you use,
+/// just make them duck-type and exception-compatible with this one
+final class StdSocket
+{
+    protected Socket m_socket;
+
+    this(string host, ushort port)
+    {
+        m_socket = new TcpSocket();
+        m_socket.connect(new InternetAddress(host, port));
+    }
+
+    void close()
+    {
+        m_socket.shutdown(SocketShutdown.BOTH);
+        m_socket.close();
+    }
+
+    // Throw PsqlSocketException when something bad happens
+    auto send(const(ubyte)[] buf)
+    {
+        auto r = m_socket.send(buf);
+        if (r == Socket.ERROR)
+            throw new PsqlSocketException("Socket.ERROR on send");
+        return r;
+    }
+
+    // Throw PsqlSocketException when something bad happens
+    auto receive(ubyte[] buf)
+    {
+        auto r = m_socket.receive(buf);
+        if (r == 0 && buf.length > 0)
+            throw new PsqlSocketException("Connection closed");
+        if (r == Socket.ERROR)
+            throw new PsqlSocketException("Socket.ERROR on recieve");
+        return r;
+    }
+}
+
 
 
 /// Connection and authorization parameters
@@ -49,14 +83,13 @@ struct Message
     ubyte[] data;
 }
 
+private void nop_logger(T...)(lazy T vals) {}
 
-static this()
-{
-    setLogLevel(LogLevel.debug_);
-}
-
-
-class PSQLConnection
+/// assign some nop function to logDebug when you're fine with results
+class PSQLConnection(
+    SocketT = StdSocket,
+    alias logDebug = nop_logger,
+    alias logError = nop_logger)
 {
     protected
     {
@@ -100,20 +133,14 @@ class PSQLConnection
         try
         {
             logDebug("Trying to open TCP connection to PSQL");
-            //socket = connectTCP(bp.host, bp.port);
-            socket = new TcpSocket();
-            socket.connect(new InternetAddress(bp.host, bp.port));
+            socket = new SocketT(bp.host, bp.port);
             logDebug("Success");
         }
         catch (Exception e)
         {
             throw new PsqlSocketException(e.msg);
         }
-        scope(failure)
-        {
-            socket.shutdown(SocketShutdown.BOTH);
-            socket.close();
-        }
+        scope(failure) socket.close();
         initialize(bp);
         open = true;
     }
@@ -124,10 +151,16 @@ class PSQLConnection
     {
         ensureOpen();
         open = false;
-        putTerminateMessage();
-        flush();
-        socket.shutdown(SocketShutdown.BOTH);
-        socket.close();
+        try
+        {
+            putTerminateMessage();
+            flush();
+            socket.close();
+        }
+        catch (Exception e)
+        {
+            logError("Exception caught while terminating PSQL connection: ", e.msg);
+        }
     }
 
     /// flush writeBuffer into the socket. This one blocks/yields.
@@ -137,18 +170,15 @@ class PSQLConnection
         {
             // does not block if zero length:
             // https://github.com/vibe-d/vibe-core/blob/master/source/vibe/core/net.d#L607
-            /*auto w = socket.write(writeBuffer[0..bufHead], IOMode.all);
-            while (bufHead - w > 0)
-                w += socket.write(writeBuffer[w..bufHead], IOMode.all);*/
             auto w = socket.send(writeBuffer[0..bufHead]);
             while (bufHead - w > 0)
                 w += socket.send(writeBuffer[w..bufHead]);
             logDebug("flushed %d bytes: %s", w, writeBuffer[0..bufHead].to!string);
         }
-        catch (Exception e)
+        catch (PsqlSocketException e)
         {
             open = false;
-            throw new PsqlSocketException(e.msg);
+            throw e;
         }
         finally
         {
@@ -164,7 +194,7 @@ class PSQLConnection
 
     /// Save write buffer cursor in order to be able to restore it in case of errors.
     /// Use it to prevent sending junk to backend when something goes wrong during
-    /// message writing.
+    /// marshalling or message creation.
     auto saveBuffer()
     {
         struct WriteCursor
@@ -198,9 +228,9 @@ class PSQLConnection
     void putBindMessage(FR, PR, RR)
         (string portal, string prepared, scope FR formatCodes, scope PR parameters,
         scope RR resultFormatCodes)
-    //if (isInputRange!FR && is(ElementType!FR == FormatCode) &&
-    //    isInputRange!RR && is(ElementType!RR == FormatCode) &&
-    //    ifInputRange!PR && is(ElementType!PR == int delegate(ubyte[])))
+    if (isInputRange!FR && is(ElementType!FR == FormatCode) &&
+        isInputRange!RR && is(ElementType!RR == FormatCode) &&
+        isInputRange!PR && is(ElementType!PR == int delegate(ubyte[])))
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Bind);
@@ -313,6 +343,8 @@ class PSQLConnection
         logDebug("Query message sent");
     }
 
+    alias putSimpleQuery = putQueryMessage;
+
     /// put Sync message into write buffer
     void putSyncMessage()
     {
@@ -410,7 +442,7 @@ protected:
                 {
                     enforce!PsqlClientException(authType == -1,
                         "Unexpected second Authentication message from backend");
-                    authType = bigEndianToNative!int(msg.data[0..4]);
+                    authType = demarshalNumber(msg.data[0..4]);
                     if (authType == 0)  // instantly authorized, so we'll get readyForQuery
                         readyForQueryExpected++;
                     else
@@ -440,7 +472,7 @@ protected:
         int authRes = -1;
         pollMessages((Message msg, ref bool e, ref string eMsg) {
                 if (msg.type == BackendMessageType.Authentication)
-                    authRes = bigEndianToNative!int(msg.data[0..4]);
+                    authRes = demarshalNumber(msg.data[0..4]);
                 return false;
             });
         enforce!PsqlClientException(authRes == 0, "No AuthenticationOk message");
@@ -516,7 +548,7 @@ protected:
         try
         {
             logDebug("reading %d bytes", buf.length);
-            //size_t r = socket.read(buf, IOMode.all);
+            // TODO: make sure this code is generic enough for all sockets
             auto r = socket.receive(buf);
             if (r == Socket.ERROR)
                 throw new PsqlSocketException("socket.recieve returned error");
@@ -638,7 +670,8 @@ protected:
         logDebug("Got message of type " ~ res.type.to!string);
         ubyte[4] length_arr;
         read(length_arr);
-        int length = bigEndianToNative!int(length_arr) - 4;
+        int length = demarshalNumber(length_arr) - 4;
+        enforce!PsqlClientException(length >= 0, "Negative message length");
         ubyte[] data;
         if (length > 0)
         {

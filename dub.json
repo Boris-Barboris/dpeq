@@ -6,12 +6,4 @@
   "copyright": "Copyright © 2017 Boris-Barboris",
   "homepage": "https://github.com/dpeq/",
   "authors": ["Boris-Barboris"],
-  "dependencies":
-  {
-    "vibe-core":
-    {
-      "version": ">=1.1.0",
-      "optional": true
-    }
-  }
 }
