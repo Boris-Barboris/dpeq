@@ -13,7 +13,7 @@ import std.exception: enforce;
 import std.bitmanip: nativeToBigEndian, bigEndianToNative;
 import std.conv: to;
 import std.traits;
-import std.typecons: Nullable;
+import std.typecons: Nullable, Tuple;
 import std.variant;
 
 import dpeq.constants;
@@ -21,7 +21,7 @@ import dpeq.exceptions;
 
 
 /// Query parameter type descriptor
-struct ParamT
+struct FieldSpec
 {
     ObjectID typeId;
     bool nullable;
@@ -35,7 +35,7 @@ struct ParamT
 
 /** Default compile-time oriented marshaller.
 * You can extend it with two custom marshallers: Pre and Post. */
-template DefaultParamMarshaller(ParamT type, alias Pre = NopMarshaller,
+template DefaultParamMarshaller(FieldSpec type, alias Pre = NopMarshaller,
     alias Post = NopMarshaller)
 {
     static if (Pre!type.canDigest)
@@ -59,13 +59,13 @@ template DefaultParamMarshaller(ParamT type, alias Pre = NopMarshaller,
 }
 
 /// Can't marshal shit
-template NopMarshaller(ParamT type)
+template NopMarshaller(FieldSpec type)
 {
     enum canDigest = false;
 }
 
 
-template StaticParamMarshaller(ParamT type)
+template StaticParamMarshaller(FieldSpec type)
 {
     static if ([StaticPgTypes.BOOLEAN, StaticPgTypes.BIGINT,
         StaticPgTypes.SMALLINT, StaticPgTypes.INT, StaticPgTypes.DOUBLE].canFind(type.typeId))
@@ -91,24 +91,36 @@ template StaticParamMarshaller(ParamT type)
         enum canDigest = false;
 }
 
+
+/// Return native type for field spec
+template TypeByFieldSpec(FieldSpec pt)
+{
+    static if (pt.nullable)
+        alias TypeByFieldSpec = Nullable!(TypeByTypeID!(cast(ObjectID) pt.typeId));
+    else
+        alias TypeByFieldSpec = TypeByTypeID!(cast(ObjectID) pt.typeId);
+}
+
+
 /// Return native type wich resembles psql one
 template TypeByTypeID(ObjectID typeId)
 {
-    static if (typeId = StaticPgTypes.SMALLINT)
+    static if (typeId == StaticPgTypes.SMALLINT)
         alias TypeByTypeID = short;
-    static if (typeId = StaticPgTypes.INT)
+    static if (typeId == StaticPgTypes.INT)
         alias TypeByTypeID = int;
-    static if (typeId = StaticPgTypes.BIGINT)
+    static if (typeId == StaticPgTypes.BIGINT)
         alias TypeByTypeID = long;
-    static if (typeId = StaticPgTypes.DOUBLE)
+    static if (typeId == StaticPgTypes.DOUBLE)
             alias TypeByTypeID = double;
-    static if (typeId = StaticPgTypes.BOOLEAN)
+    static if (typeId == StaticPgTypes.BOOLEAN)
         alias TypeByTypeID = bool;
-    static if (typeId = StaticPgTypes.TEXT ||
-            typeId = StaticPgTypes.CHARACTER ||
+    static if (typeId == StaticPgTypes.TEXT ||
+            typeId == StaticPgTypes.CHARACTER ||
             typeId == StaticPgTypes.VARCHAR)
         alias TypeByTypeID = string;
 }
+
 
 pragma(inline)
 int marshalNull(ubyte[] to)
@@ -178,7 +190,7 @@ int marshalCstring(ubyte[] to, string s)
 
 /** Default compile-time oriented demarshaller.
 * You can extend it with two custom demarshallers: Pre and Post. */
-template DefaultFieldDemarshaller(ParamT type, alias Pre = NopMarshaller,
+template DefaultFieldDemarshaller(FieldSpec type, alias Pre = NopMarshaller,
     alias Post = NopMarshaller)
 {
     static if (Pre!type.canDigest)
@@ -200,7 +212,7 @@ template DefaultFieldDemarshaller(ParamT type, alias Pre = NopMarshaller,
 
 
 /// Default well-known types
-template StaticFieldDemarshaller(ParamT type)
+template StaticFieldDemarshaller(FieldSpec type)
 {
     static if ([StaticPgTypes.BOOLEAN, StaticPgTypes.BIGINT,
         StaticPgTypes.SMALLINT, StaticPgTypes.INT, StaticPgTypes.DOUBLE].canFind(type.typeId))

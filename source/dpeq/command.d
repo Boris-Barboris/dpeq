@@ -24,7 +24,9 @@ import dpeq.schema;
 // Different forms of command input
 /////////////////////////////////////
 
-/// Simple query always returns data in TEXT format.
+/// Simple query is simple. Sent string to server and get responses.
+/// The most versatile, unsafe way to issue commands to PSQL. It is also slow.
+/// Simple query always returns data in FormatCode.Text format.
 void postSimpleQuery(ConnT)(ConnT conn, string query)
 {
     conn.putQueryMessage(query);
@@ -32,11 +34,10 @@ void postSimpleQuery(ConnT)(ConnT conn, string query)
 
 
 /////////////////////////////////////
-// Methods to get query results
+// Functions to get query results
 /////////////////////////////////////
 
-/// The most generic dynamic method, suitable for
-/// non-typed apriori-unknown queries.
+/// Generic dynamic method, suitable for both simple and prepared queries.
 QueryResult getQueryResults(ConnT)(ConnT conn)
 {
     QueryResult res;

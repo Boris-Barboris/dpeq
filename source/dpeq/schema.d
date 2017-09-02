@@ -13,6 +13,7 @@ import std.conv: to;
 import std.traits;
 import std.variant;
 import std.meta;
+import std.typecons;
 import std.range;
 
 import dpeq.exceptions;
@@ -269,4 +270,46 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)(RowBlock block)
     }
 
     return RowsRange(block.dataRows, typeArr, fcArr, totalColumns);
+}
+
+
+/// for row spec `spec` build native tuple representation
+template DefaultTupleBuilder(FieldSpec[] spec, alias Plugin = NopSpecConverterPlugin)
+{
+    alias DefaultTupleBuilder =
+        Tuple!(
+            staticMap!(
+                SpecMapper!(Plugin).Func,
+                aliasSeqOf!spec));
+}
+
+template SpecMapper(alias Plugin)
+{
+    template Func(FieldSpec spec)
+    {
+        pragma(msg, "avavav ", spec);
+        static if (is(Plugin!spec))
+            alias Func = Plugin!spec;
+        else
+            alias Func = DefaultSpecConverter!spec;
+    }
+}
+
+template DefaultSpecConverter(FieldSpec spec)
+{
+    alias DefaultSpecConverter = TypeByFieldSpec!spec;
+}
+
+template NopSpecConverterPlugin(FieldSpec spec)
+{
+}
+
+
+
+/// Returns RandomAccessRange of InputRanges of tuples.
+/// Customizable with Converter alias, wich must provide demarshal call.
+auto blockToTuples(FieldSpec[] spec, alias Demarshaller = DefaultFieldDemarshaller,
+    alias TupleBuilder = DefaultTupleBuilder)()
+{
+    pragma(msg, "Tuple from spec: ", TupleBuilder!spec);
 }

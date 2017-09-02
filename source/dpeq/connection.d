@@ -149,7 +149,6 @@ class PSQLConnection(
     /// closed, so be aware.
     void terminate()
     {
-        ensureOpen();
         open = false;
         try
         {
@@ -550,19 +549,13 @@ protected:
             logDebug("reading %d bytes", buf.length);
             // TODO: make sure this code is generic enough for all sockets
             auto r = socket.receive(buf);
-            if (r == Socket.ERROR)
-                throw new PsqlSocketException("socket.recieve returned error");
-            if (r == 0)
-            {
-                open = false;
-                throw new PsqlSocketException("connection closed");
-            }
             assert(r == buf.length);
             logDebug("read %d bytes", r);
         }
-        catch (Exception e)
+        catch (PsqlSocketException e)
         {
-            throw new PsqlSocketException(e.msg);
+            open = false;
+            throw e;
         }
     }
 
