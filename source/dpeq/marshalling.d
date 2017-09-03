@@ -134,7 +134,7 @@ int marshalNull(ubyte[] to)
 // I don't really know how versatile are these functions, so let's keep
 // them FixedField instead of NumericField
 
-int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr)
+int marshalNullableFixedField(T)(ubyte[] to, lazy const(Nullable!T) ptr)
 {
     if (T.sizeof > to.length)
         return -2;
@@ -145,7 +145,7 @@ int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr)
     return arr.length;
 }
 
-int marshalFixedField(T)(ubyte[] to, in T val)
+int marshalFixedField(T)(ubyte[] to, lazy const(T) val)
 {
     if (T.sizeof > to.length)
         return -2;
@@ -154,7 +154,7 @@ int marshalFixedField(T)(ubyte[] to, in T val)
     return arr.length;
 }
 
-int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
+int marshalNullableStringField(Dummy = void)(ubyte[] to, lazy const(Nullable!string) val)
 {
     if (val.isNull)
         return marshalNull(to);
@@ -166,7 +166,7 @@ int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
     return arr.length.to!int;
 }
 
-int marshalStringField(Dummy = void)(ubyte[] to, in string s)
+int marshalStringField(Dummy = void)(ubyte[] to, lazy const(string) s)
 {
     if (s.length > to.length)
         return -2;
@@ -177,7 +177,7 @@ int marshalStringField(Dummy = void)(ubyte[] to, in string s)
 
 /// service function, for protocol messages.
 /// Data strings are passed without trailing nulls.
-int marshalCstring(ubyte[] to, in string s)
+int marshalCstring(ubyte[] to, lazy const(string) s)
 {
     if (s.length + 1 > to.length)
         return -2;

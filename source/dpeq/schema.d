@@ -154,19 +154,3 @@ struct RowBlock
     RowDescription rowDesc;
     Message[] dataRows;
 }
-
-
-/// Generic query result
-struct QueryResult
-{
-    /// Set if EmptyQueryResponse was met
-    bool empty;
-
-    /// Number of CommandComplete messages recieved. Mostly used
-    /// in simple query workflow, since extended protocol uses only
-    /// ReadyForQuery.
-    short commandsComplete;
-
-    /// data
-    RowBlock[] blocks;
-}

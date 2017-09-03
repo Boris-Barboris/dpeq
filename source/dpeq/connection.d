@@ -227,9 +227,9 @@ class PSQLConnection(
     void putBindMessage(FR, PR, RR)
         (string portal, string prepared, scope FR formatCodes, scope PR parameters,
         scope RR resultFormatCodes)
-    if (isInputRange!FR && is(ElementType!FR == FormatCode) &&
-        isInputRange!RR && is(ElementType!RR == FormatCode) &&
-        isInputRange!PR && is(ElementType!PR == int delegate(ubyte[])))
+    //if (isInputRange!FR && is(Unqual!(ElementType!FR) == FormatCode) &&
+    //    isInputRange!RR && is(Unqual!(ElementType!RR) == FormatCode) &&
+    //    isInputRange!PR && is(ElementType!PR == int delegate(ubyte[])))
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Bind);
@@ -242,6 +242,7 @@ class PSQLConnection(
         auto fcodePrefix = reserveLen!short();
         foreach (FormatCode fcode; formatCodes)
         {
+            logDebug("Bind: writing %d fcode", fcode);
             write(cast(short)fcode);
             fcodes++;
         }
@@ -253,8 +254,9 @@ class PSQLConnection(
         foreach (param; parameters)
         {
             auto paramPrefix = reserveLen!int();
-            wrappedMarsh(param);
-            paramPrefix.fill();
+            int r = wrappedMarsh(param);
+            logDebug("Bind: wrote 4bytes + %d bytes for value", r);
+            paramPrefix.write(r);    // careful! -1 means Null
             pcount++;
         }
         pcountPrefix.write(pcount);
@@ -265,12 +267,13 @@ class PSQLConnection(
         foreach (FormatCode fcode; resultFormatCodes)
         {
             write(cast(short)fcode);
+            logDebug("Bind: writing %d rfcode", fcode);
             rcount++;
         }
-        fcolPrefix.write(rcount);
+        rcolPrefix.write(rcount);
 
         lenTotal.fill();
-        logDebug("Bind message sent");
+        logDebug("Bind message buffered");
     }
 
     /// put Close message into write buffer.
@@ -285,9 +288,25 @@ class PSQLConnection(
         write(cast(ubyte)closeWhat);
         cwrite(name);
         lenTotal.fill();
-        logDebug("Close message sent");
+        logDebug("Close message buffered");
     }
 
+    /// put Close message into write buffer.
+    /// `closeWhat` is 'S' for prepared statement and
+    /// 'P' for portal.
+    void putDescribeMessage(char descWhat, string name)
+    {
+        ensureOpen();
+        assert(descWhat == 'S' || descWhat == 'P');
+        write(cast(ubyte)FrontMessageType.Describe);
+        auto lenTotal = reserveLen();
+        write(cast(ubyte)descWhat);
+        cwrite(name);
+        lenTotal.fill();
+        logDebug("Describe message buffered");
+    }
+
+    // non-zero maxRows will generate PortalSuspended messages, too much hustle
     void putExecuteMessage(string portal = "", int maxRows = 0)
     {
         ensureOpen();
@@ -297,7 +316,7 @@ class PSQLConnection(
         write(maxRows);
         lenTotal.fill();
         readyForQueryExpected++;
-        logDebug("Execute message sent");
+        logDebug("Execute message buffered");
     }
 
     void putFlushMessage()
@@ -305,11 +324,11 @@ class PSQLConnection(
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Flush);
         write(4);
-        logDebug("Flush message sent");
+        logDebug("Flush message buffered");
     }
 
     void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
-    //  if (isInputRange!PR && is(ElementType!PR == ObjectID) &&
+    //  if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID) &&
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Parse);
@@ -328,7 +347,7 @@ class PSQLConnection(
         pcountPrefix.write(pcount);
 
         lenTotal.fill();
-        logDebug("Parse message sent");
+        logDebug("Parse message buffered");
     }
 
     void putQueryMessage(string query)
@@ -339,7 +358,7 @@ class PSQLConnection(
         cwrite(query);
         lenTotal.fill();
         readyForQueryExpected++;
-        logDebug("Query message sent");
+        logDebug("Query message buffered");
     }
 
     alias putSimpleQuery = putQueryMessage;
@@ -351,8 +370,10 @@ class PSQLConnection(
         write(cast(ubyte)FrontMessageType.Sync);
         write(4);
         readyForQueryExpected++;
-        logDebug("Sync message sent");
+        logDebug("Sync message buffered");
     }
+
+    alias sync = putSyncMessage;
 
     /** this function reads messages from the socket in loop until:
     *     1). if finishOnError is set and ErrorResponse is recieved, function
@@ -419,14 +440,14 @@ protected:
         cwrite(params.database);
         write(cast(ubyte)0);
         lenPrefix.fill();
-        logDebug("Startup message sent");
+        logDebug("Startup message buffered");
     }
 
     void putTerminateMessage()
     {
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
-        logDebug("Terminate message sent");
+        logDebug("Terminate message buffered");
     }
 
     void initialize(in BackendParams params)
@@ -484,7 +505,7 @@ protected:
         cwrite(pw);
         lenPrefix.fill();
         readyForQueryExpected++;
-        logDebug("Password message sent");
+        logDebug("Password message buffered");
     }
 
     void handleErrorMessage(ubyte[] data, ref string msg)
@@ -568,6 +589,8 @@ protected:
             writeBuffer.length = writeBuffer.length + 4 * 4096;
             bcount = m();
         }
+        if (bcount > 0)
+            bufHead += bcount;
         return bcount;
     }
 
@@ -579,7 +602,8 @@ protected:
             writeBuffer.length = writeBuffer.length + 4 * 4096;
             bcount = m(writeBuffer[bufHead .. $]);
         }
-        bufHead += bcount;
+        if (bcount > 0)
+            bufHead += bcount;
         return bcount;
     }
 
@@ -587,10 +611,7 @@ protected:
     int write(T)(T val)
         if (isNumeric!T)
     {
-        int w = wrappedMarsh(() => marshalFixedField(writeBuffer[bufHead .. $], val));
-        if (w > 0)
-            bufHead += w;
-        return w;
+        return wrappedMarsh(() => marshalFixedField(writeBuffer[bufHead .. $], val));
     }
 
     /// Reserve space in write buffer for length prefix and return
@@ -639,18 +660,12 @@ protected:
 
     int write(string s)
     {
-        int w = wrappedMarsh(() => marshalStringField(writeBuffer[bufHead .. $], s));
-        if (w > 0)
-            bufHead += w;
-        return w;
+        return wrappedMarsh(() => marshalStringField(writeBuffer[bufHead .. $], s));
     }
 
     int cwrite(string s)
     {
-        int w = wrappedMarsh(() => marshalCstring(writeBuffer[bufHead .. $], s));
-        if (w > 0)
-            bufHead += w;
-        return w;
+        return wrappedMarsh(() => marshalCstring(writeBuffer[bufHead .. $], s));
     }
 
     /// read exactly one message from the socket

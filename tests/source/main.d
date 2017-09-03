@@ -5,31 +5,63 @@ import dpeq;
 
 import std.stdio;
 
+enum FieldSpec[] SessionSpec = [
+    FieldSpec(StaticPgTypes.BIGINT, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.SMALLINT, false),
+    FieldSpec(StaticPgTypes.BIGINT, false),
+    FieldSpec(StaticPgTypes.BIGINT, false),
+    FieldSpec(StaticPgTypes.BIGINT, false),
+    FieldSpec(StaticPgTypes.BOOLEAN, false),
+    FieldSpec(StaticPgTypes.BOOLEAN, false),
+    FieldSpec(StaticPgTypes.VARCHAR, false),
+    FieldSpec(StaticPgTypes.INT, false),
+];
 
 void main()
 {
-    tuple_select();
+    bind_example();
+    //tuple_select();
+    //select_example();
+}
+
+void bind_example()
+{
+    auto con = new PSQLConnection!(StdSocket, writefln, writefln)(
+        BackendParams("localhost", cast(ushort)5432, "postgres", "r00tme", "drova"));
+    auto ps = new PreparedStatement!(typeof(con))
+        (con, "SELECT * FROM sessions LIMIT $1;", null, true);
+    auto portal = new Portal!(typeof(con))(con, ps, 1, true);
+    ps.postParseMessage();
+    portal.bind!([FieldSpec(StaticPgTypes.BIGINT, false)])(3);
+    portal.execute(false);
+    con.sync();
+    con.flush();
+    ps.ensureParseComplete();
+    writefln("Parse complete");
+    portal.ensureBindComplete();
+    writefln("Bind complete");
+
+    auto res = con.getQueryResults();
+    auto rows = blockToTuples!SessionSpec(res.blocks[0].dataRows);
+    foreach (row; rows)
+    {
+        writeln("iterating over data row");
+        writeln("row = ", row);
+    }
+
+    portal.postCloseMessage();
+    ps.postCloseMessage();
+    con.sync();
+    con.terminate();
 }
 
 void tuple_select()
 {
-    enum FieldSpec[] SessionSpec = [
-        FieldSpec(StaticPgTypes.BIGINT, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.SMALLINT, false),
-        FieldSpec(StaticPgTypes.BIGINT, false),
-        FieldSpec(StaticPgTypes.BIGINT, false),
-        FieldSpec(StaticPgTypes.BIGINT, false),
-        FieldSpec(StaticPgTypes.BOOLEAN, false),
-        FieldSpec(StaticPgTypes.BOOLEAN, false),
-        FieldSpec(StaticPgTypes.VARCHAR, false),
-        FieldSpec(StaticPgTypes.INT, false),
-    ];
-
     auto con = new PSQLConnection!(StdSocket, writefln, writefln)(
         BackendParams("localhost", cast(ushort)5432, "postgres", "r00tme", "drova"));
     con.postSimpleQuery("SELECT * FROM sessions LIMIT 2;");
