@@ -6,9 +6,9 @@ PSQL's native interface is very performant, and it's a shame there is currently
 no native solution for D.
 
 You should probably get yourself familiar with it, if you want to use it.
-https://www.postgresql.org/docs/9.5/static/protocol.html
-https://www.postgresql.org/docs/9.5/static/protocol-flow.html
-https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
+https://www.postgresql.org/docs/9.5/static/protocol.html   
+https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
+https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
 
 Many thanks to authors of https://github.com/teamhackback/hb-ddb and
 https://github.com/pszturmaj/ddb, wich gave this library some inspiration.
@@ -206,6 +206,8 @@ void bind_example()
 
 Simple tests on localhost PSQL in docker. Vibe-d http server, 4 threads,
 slightly hacked eventcore and vibe-core. 64 concurrent *ab* workers.
+All I want to say, if you're careful enough, you should be able to pass some
+good data streams. But it remains to be broken.
 
 Dynamically parsed and bound select of all rows (70 items):
 ```
