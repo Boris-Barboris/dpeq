@@ -20,6 +20,7 @@ import dpeq.constants;
 import dpeq.exceptions;
 
 
+
 /// Query parameter type descriptor
 struct FieldSpec
 {
@@ -28,34 +29,44 @@ struct FieldSpec
 }
 
 
-/////////////////////////////////
-// Marshalling
-/////////////////////////////////
-
-
-/** Default compile-time oriented marshaller.
-* You can extend it with two custom marshallers: Pre and Post. */
-template DefaultParamMarshaller(FieldSpec type, alias Pre = NopMarshaller,
+/** Default compile-time one-to-one mapper, wich for ObjectID of some type
+* gives it's native type representation, and marshalling and demarshalling
+* functions. You can extend it with two custom mappers: Pre and Post. */
+template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
     alias Post = NopMarshaller)
 {
-    static if (Pre!type.canDigest)
+    static if (Pre!field.canDigest)
     {
+        // must alias to native type representing this value
+        alias type = Pre!field.type;
+
+        // By default, this format code will be passed in Bind message
+        // as parameter formatCode.
         enum formatCode = Pre!type.formatCode;
-        alias marshal = Pre!type.marshal;
+
+        // demarshaller must accept all formatCodes that make sence for this type.
+        alias demarshal = Pre!field.demarshal;
+
+        // marshaller only needs to support one formatCode, mentioned above
+        alias marshal = Pre!field.marshal;
     }
-    else static if (StaticParamMarshaller!type.canDigest)
+    else static if (StaticFieldMarshaller!field.canDigest)
     {
-        enum formatCode = StaticParamMarshaller!type.formatCode;
-        alias marshal = StaticParamMarshaller!type.marshal;
+        alias type = StaticFieldMarshaller!field.type;
+        enum formatCode = StaticFieldMarshaller!field.formatCode;
+        alias demarshal = StaticFieldMarshaller!field.demarshal;
+        alias marshal = StaticFieldMarshaller!field.marshal;
     }
-    else static if (Post!type.canDigest)
+    else static if (Post!field.canDigest)
     {
+        alias type = Post!field.type;
         enum formatCode = Post!type.formatCode;
-        alias marshal = Post!type.marshal;
+        alias demarshal = Post!field.demarshal;
+        alias marshal = Post!field.marshal;
     }
     else
-        static assert(0, "Unknown typeId " ~ type.typeId.to!string ~
-            ", cannot marshal");
+        static assert(0, "Unknown typeId " ~ field.typeId.to!string ~
+            ", cannot demarshal");
 }
 
 /// Can't marshal shit
@@ -65,70 +76,65 @@ template NopMarshaller(FieldSpec type)
 }
 
 
-template StaticParamMarshaller(FieldSpec type)
+/// Types handled by dpeq natively
+template StaticFieldMarshaller(FieldSpec field)
 {
-    static if ([StaticPgTypes.BOOLEAN, StaticPgTypes.BIGINT,
-        StaticPgTypes.SMALLINT, StaticPgTypes.INT, StaticPgTypes.DOUBLE].canFind(type.typeId))
-    {
-        enum canDigest = true;
-        enum formatCode = FormatCode.Binary;
-        static if (type.nullable)
-            alias marshal = marshalNullableFixed!(TypeByTypeID!(type.typeId));
-        else
-            alias marshal = marshalFixed!(TypeByTypeID!(type.typeId));
-    }
-    else static if ([StaticPgTypes.CHARACTER, StaticPgTypes.VARCHAR,
-        StaticPgTypes.TEXT].canFind(type.typeId))
-    {
-        enum canDigest = true;
-        enum formatCode = FormatCode.Text;
-        static if (type.nullable)
-            alias marshal = marshalNullableString;
-        else
-            alias marshal = marshalString;
-    }
+    static if (field.typeId == StaticPgTypes.BOOLEAN)
+        mixin MarshTemplate!(bool, FormatCode.Binary, "FixedField");
+    else static if (field.typeId == StaticPgTypes.BIGINT)
+        mixin MarshTemplate!(long, FormatCode.Binary, "FixedField");
+    else static if (field.typeId == StaticPgTypes.SMALLINT)
+        mixin MarshTemplate!(short, FormatCode.Binary, "FixedField");
+    else static if (field.typeId == StaticPgTypes.INT)
+        mixin MarshTemplate!(int, FormatCode.Binary, "FixedField");
+    else static if (field.typeId == StaticPgTypes.CHARACTER)
+        mixin MarshTemplate!(string, FormatCode.Text, "StringField");
+    else static if (field.typeId == StaticPgTypes.VARCHAR)
+        mixin MarshTemplate!(string, FormatCode.Text, "StringField");
+    else static if (field.typeId == StaticPgTypes.TEXT)
+        mixin MarshTemplate!(string, FormatCode.Text, "StringField");
     else
         enum canDigest = false;
 }
 
-
-/// Return native type for field spec
-template TypeByFieldSpec(FieldSpec pt)
+// to prevent code duplication
+mixin template MarshTemplate(NativeT, FormatCode fcode, string suffix)
 {
-    static if (pt.nullable)
-        alias TypeByFieldSpec = Nullable!(TypeByTypeID!(cast(ObjectID) pt.typeId));
+    enum canDigest = true;
+    enum formatCode = fcode;
+    static if (field.nullable)
+    {
+        alias type = Nullable!NativeT;
+        mixin("alias demarshal = demarshalNullable" ~ suffix ~ "!(NativeT);");
+        mixin("alias marshal = marshalNullable" ~ suffix ~ "!(NativeT);");
+    }
     else
-        alias TypeByFieldSpec = TypeByTypeID!(cast(ObjectID) pt.typeId);
+    {
+        alias type = NativeT;
+        mixin("alias demarshal = demarshal" ~ suffix ~ "!(NativeT);");
+        mixin("alias marshal = marshal" ~ suffix ~ "!(NativeT);");
+    }
 }
 
 
-/// Return native type wich resembles psql one
-template TypeByTypeID(ObjectID typeId)
-{
-    static if (typeId == StaticPgTypes.SMALLINT)
-        alias TypeByTypeID = short;
-    static if (typeId == StaticPgTypes.INT)
-        alias TypeByTypeID = int;
-    static if (typeId == StaticPgTypes.BIGINT)
-        alias TypeByTypeID = long;
-    static if (typeId == StaticPgTypes.DOUBLE)
-            alias TypeByTypeID = double;
-    static if (typeId == StaticPgTypes.BOOLEAN)
-        alias TypeByTypeID = bool;
-    static if (typeId == StaticPgTypes.TEXT ||
-            typeId == StaticPgTypes.CHARACTER ||
-            typeId == StaticPgTypes.VARCHAR)
-        alias TypeByTypeID = string;
-}
+
+///////////////////////////////////////////////////////////////////////////
+// Marshaller implementations. Marshaller writes only body of the data
+// and returns count of bytes written, -1 if it's a null value,
+// and -2 if the buffer is too small to fit whole value.
+///////////////////////////////////////////////////////////////////////////
 
 
 pragma(inline)
 int marshalNull(ubyte[] to)
 {
-    return -1;
+    return -1;  // special case, -1 length is null value in eq protocol.
 }
 
-int marshalNullableFixed(T)(ubyte[] to, const Nullable!T ptr)
+// I don't really know how versatile are these functions, so let's keep
+// them FixedField instead of NumericField
+
+int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr)
 {
     if (T.sizeof > to.length)
         return -2;
@@ -139,7 +145,7 @@ int marshalNullableFixed(T)(ubyte[] to, const Nullable!T ptr)
     return arr.length;
 }
 
-int marshalFixed(T)(ubyte[] to, const T val)
+int marshalFixedField(T)(ubyte[] to, in T val)
 {
     if (T.sizeof > to.length)
         return -2;
@@ -148,7 +154,7 @@ int marshalFixed(T)(ubyte[] to, const T val)
     return arr.length;
 }
 
-int marshalNullableString(ubyte[] to, const Nullable!string val)
+int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
 {
     if (val.isNull)
         return marshalNull(to);
@@ -160,7 +166,7 @@ int marshalNullableString(ubyte[] to, const Nullable!string val)
     return arr.length.to!int;
 }
 
-int marshalString(ubyte[] to, string s)
+int marshalStringField(Dummy = void)(ubyte[] to, in string s)
 {
     if (s.length > to.length)
         return -2;
@@ -171,7 +177,7 @@ int marshalString(ubyte[] to, string s)
 
 /// service function, for protocol messages.
 /// Data strings are passed without trailing nulls.
-int marshalCstring(ubyte[] to, string s)
+int marshalCstring(ubyte[] to, in string s)
 {
     if (s.length + 1 > to.length)
         return -2;
@@ -183,59 +189,10 @@ int marshalCstring(ubyte[] to, string s)
 
 
 
-/////////////////////////////////
-// Demarshalling
-/////////////////////////////////
-
-
-/** Default compile-time oriented demarshaller.
-* You can extend it with two custom demarshallers: Pre and Post. */
-template DefaultFieldDemarshaller(FieldSpec type, alias Pre = NopMarshaller,
-    alias Post = NopMarshaller)
-{
-    static if (Pre!type.canDigest)
-    {
-        alias demarshal = Pre!type.demarshal;
-    }
-    else static if (StaticFieldDemarshaller!type.canDigest)
-    {
-        alias demarshal = StaticFieldDemarshaller!type.demarshal;
-    }
-    else static if (Post!type.canDigest)
-    {
-        alias demarshal = Post!type.demarshal;
-    }
-    else
-        static assert(0, "Unknown typeId " ~ type.typeId.to!string ~
-            ", cannot demarshal");
-}
-
-
-/// Default well-known types
-template StaticFieldDemarshaller(FieldSpec type)
-{
-    static if ([StaticPgTypes.BOOLEAN, StaticPgTypes.BIGINT,
-        StaticPgTypes.SMALLINT, StaticPgTypes.INT, StaticPgTypes.DOUBLE].canFind(type.typeId))
-    {
-        enum canDigest = true;
-        static if (type.nullable)
-            alias demarshal = demarshalNullableFixedField!(TypeByTypeID!(type.typeId));
-        else
-            alias demarshal = demarshalFixedField!(TypeByTypeID!(type.typeId));
-    }
-    else static if ([StaticPgTypes.CHARACTER, StaticPgTypes.VARCHAR,
-        StaticPgTypes.TEXT])
-    {
-        enum canDigest = true;
-        static if (type.nullable)
-            alias demarshal = demarshalNullableStringField;
-        else
-            alias demarshal = demarshalStringField;
-    }
-    else
-        enum canDigest = false;
-}
-
+//////////////////////////////////////////////////////////////////////////////
+// Demarshalling implementations. Demarshallers take byte array that contains
+// data body, it's format code and length according to field prefix.
+//////////////////////////////////////////////////////////////////////////////
 
 
 /// Simple demarshal of some integer type.
@@ -244,14 +201,6 @@ T demarshalNumber(T = int)(const(ubyte)[] from)
     if (isNumeric!T)
 {
     return bigEndianToNative!T(from[0 .. T.sizeof]);
-}
-
-/// psql can return bigint (8 bytes) as one byte if it is small
-T bigEndianToNativePsql(T)(const(ubyte)[] from)
-{
-    ubyte[T.sizeof] arr = 0;
-    arr[T.sizeof - from.length .. $] = from;
-    return bigEndianToNative!T(arr);
 }
 
 /// psql uses `t` and `f` for boolean
@@ -264,73 +213,63 @@ bool to(T: bool)(in string s)
     throw new PsqlClientException("Unable to unmarshal bool from string " ~ s);
 }
 
-T demarshalFixedField(T)(const(ubyte)[] from, FormatCode fCode, out int shift)
+T demarshalFixedField(T)(const(ubyte)[] from, in FormatCode fCode, in int len)
 {
-    int len = demarshalNumber(from[0 .. 4]);
-    shift = 4 + len;
+    enforce!PsqlClientException(len > 0, "zero-sized fixed non-nullable field");
     if (fCode == FormatCode.Binary)
     {
-        enforce!PsqlClientException(len <= T.sizeof, "Field size mismatch");
-        return bigEndianToNativePsql!T(from[0 .. l]);
+        enforce!PsqlClientException(len == T.sizeof, "Field size mismatch");
+        return bigEndianToNative!T(from[0 .. T.sizeof]);
     }
     else if (fCode == FormatCode.Text)
-        return demarshalString(from[4 .. 4 + len], len).to!T;
+        return demarshalString(from[0 .. len], len).to!T;
     else
         throw new PsqlClientException("Unsupported FormatCode");
 }
 
-Nullable!T demarshalNullableFixedField(T)(const(ubyte)[] from, FormatCode fCode, out int shift)
+Nullable!T demarshalNullableFixedField(T)
+    (const(ubyte)[] from, in FormatCode fCode, in int len)
 {
-    int len = demarshalNumber(from[0 .. 4]);
     if (len == -1)
-    {
-        shift = 4;
         return Nullable!T.init;
-    }
-    shift = 4 + len;
     if (fCode == FormatCode.Binary)
     {
-        enforce!PsqlClientException(len <= T.sizeof, "Field size mismatch, " ~
+        enforce!PsqlClientException(len == T.sizeof, "Field size mismatch, " ~
             T.stringof ~ ", actual = " ~ len.to!string);
-        return Nullable!T(bigEndianToNativePsql!T(from[0 .. len]));
+        return Nullable!T(bigEndianToNative!T(from[0 .. T.sizeof]));
     }
     else if (fCode == FormatCode.Text)
-        return Nullable!T(demarshalString(from[4 .. 4 + len], len).to!T);
+        return Nullable!T(demarshalString(from[0 .. len], len).to!T);
     else
         throw new PsqlClientException("Unsupported FormatCode");
 }
 
-string demarshalStringField(const(ubyte)[] from, FormatCode fc, out int shift)
+string demarshalStringField(Dummy = void)
+    (const(ubyte)[] from, in FormatCode fc, in int len)
 {
     assert(fc == FormatCode.Text, "binary string?");
-    int len = demarshalNumber(from[0 .. 4]);
     enforce!PsqlClientException(len >= 0, "null string in non-nullable demarshaller");
-    shift = 4 + len;
     if (len == 0)
         return "";
-    string res = (cast(immutable(char)*)(from.ptr + 4))[0 .. len.to!size_t];
+    string res = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
     return res;
 }
 
 /// returns inplace-constructed string without allocations. Hacky.
-Nullable!string demarshalNullableStringField(const(ubyte)[] from, FormatCode fc, out int shift)
+Nullable!string demarshalNullableStringField(Dummy = void)
+    (const(ubyte)[] from, in FormatCode fc, in int len)
 {
     assert(fc == FormatCode.Text, "binary string?");
-    int len = demarshalNumber(from[0 .. 4]);
     if (len == -1)
-    {
-        shift = 4;
         return Nullable!string.init;
-    }
-    shift = 4 + len;
     if (len == 0)
         return Nullable!string("");
-    string res = (cast(immutable(char)*)(from.ptr + 4))[0 .. len.to!size_t];
+    string res = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
     return Nullable!string(res);
 }
 
 /// service function
-string demarshalString(const(ubyte)[] from, size_t length)
+string demarshalString(const(ubyte)[] from, in size_t length)
 {
     return (cast(immutable(char)*)(from.ptr))[0 .. length];
 }
@@ -338,29 +277,29 @@ string demarshalString(const(ubyte)[] from, size_t length)
 
 
 ///////////////////////////////////////////
-// Runtime-driven conversion code
+// Dynamic conversion code
 ///////////////////////////////////////////
 
 
-alias RuntimeDemarshaller = Variant function(const(ubyte)[] buf, FormatCode fc, out int shift);
-
+// prototype of variant demarshaller
+alias VariantDemarshaller =
+    Variant function(const(ubyte)[] buf, in FormatCode fc, in int len);
 
 template NopConverter()
 {
-    void registerDemarshallers(ref RuntimeDemarshaller[ObjectID] dict) {}
+    void registerDemarshallers(ref VariantDemarshaller[ObjectID] dict) {}
 }
 
-Variant wrapToVariant(alias f)(const(ubyte)[] buf, FormatCode fc, out int shift)
+Variant wrapToVariant(alias f)(const(ubyte)[] buf, in FormatCode fc, in int len)
 {
-    return Variant(f(buf, fc, shift));
+    return Variant(f(buf, fc, len));
 }
-
 
 
 /// Default converter hash map. You can extend it, or define your own.
-class DefaultConverter(alias Pre, alias Post)
+class VariantConverter(alias Pre, alias Post)
 {
-    static RuntimeDemarshaller[ObjectID] demarshallers;
+    static VariantDemarshaller[ObjectID] demarshallers;
 
     static this()
     {
@@ -369,22 +308,27 @@ class DefaultConverter(alias Pre, alias Post)
         Post.registerDemarshallers(demarshallers);
     }
 
-    static void registerDemarshallers(ref RuntimeDemarshaller[ObjectID] dict)
+    static void registerDemarshallers(ref VariantDemarshaller[ObjectID] dict)
     {
-        dict[StaticPgTypes.SMALLINT] = &wrapToVariant!(demarshalNullableFixedField!short);
-        dict[StaticPgTypes.INT] = &wrapToVariant!(demarshalNullableFixedField!int);
-        dict[StaticPgTypes.BIGINT] = &wrapToVariant!(demarshalNullableFixedField!long);
-        dict[StaticPgTypes.BOOLEAN] = &wrapToVariant!(demarshalNullableFixedField!bool);
-        dict[StaticPgTypes.TEXT] = &wrapToVariant!(demarshalNullableStringField);
-        dict[StaticPgTypes.CHARACTER] = &wrapToVariant!(demarshalNullableStringField);
-        dict[StaticPgTypes.VARCHAR] = &wrapToVariant!(demarshalNullableStringField);
+        // iterate over StaticPgTypes and take demarshallers from StaticFieldMarshaller
+        foreach (em; __traits(allMembers, StaticPgTypes))
+        {
+            enum FieldSpec spec =
+                FieldSpec(__traits(getMember, StaticPgTypes, em), true);
+            static if (StaticFieldMarshaller!spec.canDigest)
+            {
+                /*pragma(msg, "registering default demarshaller for ",
+                    StaticFieldMarshaller!spec.type, " in hash table");*/
+                dict[spec.typeId] = &wrapToVariant!(StaticFieldMarshaller!spec.demarshal);
+            }
+        }
     }
 
     static Variant demarshal(const(ubyte)[] fieldBody, ObjectID type,
-        FormatCode fc, out int shift)
+        FormatCode fc, int len)
     {
-        return demarshallers[type](fieldBody, fc, shift);
+        return demarshallers[type](fieldBody, fc, len);
     }
 }
 
-alias NopedDefaultConverter = DefaultConverter!(NopConverter!(), NopConverter!());
+alias NopedDefaultConverter = VariantConverter!(NopConverter!(), NopConverter!());

@@ -587,7 +587,7 @@ protected:
     int write(T)(T val)
         if (isNumeric!T)
     {
-        int w = wrappedMarsh(() => marshalFixed(writeBuffer[bufHead .. $], val));
+        int w = wrappedMarsh(() => marshalFixedField(writeBuffer[bufHead .. $], val));
         if (w > 0)
             bufHead += w;
         return w;
@@ -618,7 +618,7 @@ protected:
                 else
                     assert(len >= T.sizeof);
                 logDebug("writing length of %d bytes to index %d", len, idx);
-                auto res = marshalFixed(con.writeBuffer[idx .. idx+T.sizeof], len);
+                auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], len);
                 assert(res == T.sizeof);
             }
 
@@ -627,7 +627,7 @@ protected:
             {
                 assert(!used, "Already filled this prefix");
                 used = true;
-                auto res = marshalFixed(con.writeBuffer[idx .. idx+T.sizeof], v);
+                auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
                 assert(res == T.sizeof);
             }
         }
@@ -639,7 +639,7 @@ protected:
 
     int write(string s)
     {
-        int w = wrappedMarsh(() => marshalString(writeBuffer[bufHead .. $], s));
+        int w = wrappedMarsh(() => marshalStringField(writeBuffer[bufHead .. $], s));
         if (w > 0)
             bufHead += w;
         return w;

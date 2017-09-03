@@ -13,9 +13,36 @@ void main()
 
 void tuple_select()
 {
-    blockToTuples!([
-        FieldSpec(StaticPgTypes.BOOLEAN, true),
-        FieldSpec(StaticPgTypes.SMALLINT, false)])();
+    enum FieldSpec[] SessionSpec = [
+        FieldSpec(StaticPgTypes.BIGINT, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.SMALLINT, false),
+        FieldSpec(StaticPgTypes.BIGINT, false),
+        FieldSpec(StaticPgTypes.BIGINT, false),
+        FieldSpec(StaticPgTypes.BIGINT, false),
+        FieldSpec(StaticPgTypes.BOOLEAN, false),
+        FieldSpec(StaticPgTypes.BOOLEAN, false),
+        FieldSpec(StaticPgTypes.VARCHAR, false),
+        FieldSpec(StaticPgTypes.INT, false),
+    ];
+
+    auto con = new PSQLConnection!(StdSocket, writefln, writefln)(
+        BackendParams("localhost", cast(ushort)5432, "postgres", "r00tme", "drova"));
+    con.postSimpleQuery("SELECT * FROM sessions LIMIT 2;");
+    con.flush();
+    auto res = con.getQueryResults();
+    writeln("Got result ", res);
+    auto rows = blockToTuples!SessionSpec(res.blocks[0]);
+    foreach (row; rows)
+    {
+        writeln("iterating over data row");
+        writeln("row = ", row);
+    }
+    con.terminate();
 }
 
 void transaction_example()
