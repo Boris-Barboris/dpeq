@@ -97,6 +97,8 @@ class PreparedStatement(ConnT)
         debug parseRequested = true;
     }
 
+    alias parse = postParseMessage;
+
     /// explicit close for persistent prepared statements
     void postCloseMessage()
     {
@@ -147,12 +149,11 @@ class Portal(ConnT)
 
     @property bool isBound() { return bound; }
 
-    this(ConnT conn, PreparedStatement!ConnT ps, short paramCount, bool persist = true)
+    this(PreparedStatement!ConnT ps, short paramCount, bool persist = true)
     {
-        assert(conn);
         assert(ps);
-        assert(paramCount > 0);
-        this.conn = conn;
+        assert(paramCount >= 0);
+        this.conn = ps.conn;
         prepStmt = ps;
         this.paramCount = paramCount;
         if (persist)
@@ -176,7 +177,11 @@ class Portal(ConnT)
         }
     }
 
-    void bind(FieldSpec[] specs, alias Marshaller = DefaultFieldMarshaller, Args...)
+    void bind(
+            FieldSpec[] specs,
+            FormatCode[] resCodes,
+            alias Marshaller = DefaultFieldMarshaller,
+            Args...)
         (lazy Args args)
     {
         assert(paramCount == Args.length);
@@ -196,26 +201,23 @@ class Portal(ConnT)
         }
 
         enum fcodes = staticMap!(CodeFromSpec, aliasSeqOf!specs);
-        static if (specs.length == 1)
-            enum fcodesr = [fcodes];
-        else
-            enum fcodesr = fcodes;
+        enum fcodesr = [fcodes];
         scope auto params = SpecMarshallerRange!(specs, Marshaller)(args);
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
-            params.marshallers, fcodesr);
+            params.marshallers, resCodes);
     }
 
     /// Generic InputRanges of types and field marshallers, to pass them
     /// directly to putBindMessage. No validation performed.
-    void bind(FR, PR, RR)(scope FR paramTypeRange, scope PR paramMarshRange,
-        scope RR returnTypeRange)
+    void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
+        scope RR returnCodeRange)
     {
         if (bound && portalName.length)
             postCloseMessage();
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
-        conn.putBindMessage(portalName, prepStmt.parsedName, paramTypeRange,
-            paramMarshRange, returnTypeRange);
+        conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
+            paramMarshRange, returnCodeRange);
     }
 
     /// explicit close for persistent prepared statements

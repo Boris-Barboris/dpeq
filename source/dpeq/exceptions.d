@@ -20,7 +20,7 @@ class PsqlClientException: Exception
     }
 }
 
-class PsqlConnectionClosedException: PsqlClientException
+class PsqlConnectionClosedException: PsqlSocketException
 {
     @safe pure nothrow this(string message,
                             string file =__FILE__,

@@ -16,7 +16,6 @@ import std.socket;
 
 import dpeq.constants;
 import dpeq.exceptions;
-import dpeq.type;
 import dpeq.marshalling;
 
 
@@ -375,6 +374,26 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
+    alias InterceptorT = bool delegate(Message, ref bool, ref string);
+
+    protected
+    {
+        struct DelayedPoller
+        {
+            InterceptorT interceptor;
+            bool finishOnError;
+            bool served = true;
+        }
+        DelayedPoller[] delayedPollers;
+    }
+
+    /// Register callbacks wich will be executed in FIFO order next time
+    /// someone calls pollMessages.
+    void delayedPoll(InterceptorT interceptor, bool finishOnError)
+    {
+        delayedPollers ~= DelayedPoller(interceptor, finishOnError);
+    }
+
     /** this function reads messages from the socket in loop until:
     *     1). if finishOnError is set and ErrorResponse is recieved, function
     *         throws immediately.
@@ -385,9 +404,15 @@ class PSQLConnection(
     *   set bool flag to true and edit string error message, if delayed throw
     *   is required.
     */
-    void pollMessages(scope bool delegate(Message, ref bool, ref string) interceptor,
-        bool finishOnError = false)
+    void pollMessages(scope InterceptorT interceptor, bool finishOnError = false)
     {
+        int intIdx = -1;
+        if (delayedPollers.length > 0)
+            intIdx = 0;
+
+        bool aFinOnError;
+        InterceptorT ic;
+
         bool finish = false;
         bool error = false;
         string eMsg;
@@ -397,6 +422,9 @@ class PSQLConnection(
         while (!finish)
         {
             Message msg = readOneMessage();
+            aFinOnError = intIdx == -1 ? finishOnError :
+                delayedPollers[intIdx].finishOnError;
+            ic = intIdx == -1 ? interceptor : delayedPollers[intIdx].interceptor;
 
             with (BackendMessageType)
             switch (msg.type)
@@ -405,7 +433,7 @@ class PSQLConnection(
                     error = true;
                     eMsg.reserve(256);
                     handleErrorMessage(msg.data, eMsg);
-                    if (finishOnError)
+                    if (aFinOnError)
                         finish = true;
                     break;
                 case ReadyForQuery:
@@ -415,8 +443,32 @@ class PSQLConnection(
                     finish = true;
                     break;
                 default:
-                    if (interceptor)
-                        finish |= interceptor(msg, intError, intErrMsg);
+                    if (ic)
+                        finish |= ic(msg, intError, intErrMsg);
+            }
+
+            // pass our loop to next interceptors, but abort if
+            // error was encountered
+            if (finish && intIdx >= 0)
+            {
+                intIdx++;
+                if (intIdx >= delayedPollers.length)
+                    intIdx = -1;
+                finish = false;
+            }
+        }
+
+        // clean up buffer of delayed interceptors
+        if (delayedPollers.length > 0)
+        {
+            if (intIdx == -1)
+                delayedPollers.length = 0;
+            else
+            {
+                assert(intIdx < delayedPollers.length);
+                for (int i = 0; i < delayedPollers.length - intIdx; i++)
+                    delayedPollers[i] = delayedPollers[i + intIdx];
+                delayedPollers.length = delayedPollers.length - intIdx;
             }
         }
 
