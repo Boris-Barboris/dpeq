@@ -1,3 +1,4 @@
 *.a
 dub.selections.json
 .dub/
+dpeq_tests
