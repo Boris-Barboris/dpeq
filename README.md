@@ -1,11 +1,11 @@
 # DPEQ - native PSQL extended query protocol client for D programming language
 
 DPEQ is a source library aimed at providing low-level communication interface,
-unaltered by abstractions and irrelevant incapsulation.
+with minimal abstraction and encapsulation.
 PSQL's native interface is very performant, and it's a shame there is currently
 no native solution for D.
 
-You should probably get yourself familiar with it, if you want to use it.
+You should probably get yourself familiar with it, if you want to use it.   
 https://www.postgresql.org/docs/9.5/static/protocol.html   
 https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
 https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
@@ -17,7 +17,7 @@ https://github.com/pszturmaj/ddb, wich gave this library some inspiration.
 * source/dpeq/command.d - medium-level interfaces to connection. You can find example
   *PreparedStatement* and *Portal* class implementations there. *getQueryResults* function
   from this module is bread and butter for response demarshalling. *blockToVariants*
-  and blockToTuples are example demarshalling implementations that allow you to
+  and *blockToTuples* are example demarshalling implementations that allow you to
   lazily work with QueryResult's.
 * source/dpeq/connection.d - buffered message streamer *PSQLConnection* is used
   to send and recieve messages. It's a class template with customazable socket
@@ -74,8 +74,8 @@ private final class SocketT
 ```
 
 ## What types are currently handled by default marshaller template?
-SMALLINT, INT, BIGINT, BOOLEAN, VARCHAR/TEXT/CHARACTER.
-Please send pull requests for new types.
+SMALLINT, INT, BIGINT, BOOLEAN, VARCHAR/TEXT/CHARACTER, and their Nullable
+counterparts. **Please send pull requests for new types!**
 To quickly hack them in and test without modifying dpeq, *DefaultFieldMarshaller*,
 *VariantConverter* and most marshalling-related templates are extensible, so
 you can modify behaviour purely from client code.
@@ -85,7 +85,8 @@ Only plaintext password supported currently. And it is not tested =).
 
 ## Examples
 
-Simple examples can be found in tests folder.
+Simple examples can be found in tests folder. Otherwise, I recommend investing time into
+learning underlying protocol and looking at the source code.
 
 ### Login
 ```
