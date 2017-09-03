@@ -3,7 +3,14 @@
 
 import dpeq;
 
+import std.meta;
 import std.stdio;
+
+template FormatCodeFromFieldSpec(FieldSpec spec)
+{
+    enum FormatCodeFromFieldSpec =
+        DefaultFieldMarshaller!(spec).formatCode;
+}
 
 enum FieldSpec[] SessionSpec = [
     FieldSpec(StaticPgTypes.BIGINT, false),
@@ -22,6 +29,9 @@ enum FieldSpec[] SessionSpec = [
     FieldSpec(StaticPgTypes.INT, false),
 ];
 
+enum FormatCode[] fullRowFormats =
+    [staticMap!(FormatCodeFromFieldSpec, aliasSeqOf!SessionSpec)];
+
 void main()
 {
     bind_example();
@@ -35,9 +45,9 @@ void bind_example()
         BackendParams("localhost", cast(ushort)5432, "postgres", "r00tme", "drova"));
     auto ps = new PreparedStatement!(typeof(con))
         (con, "SELECT * FROM sessions LIMIT $1;", null, true);
-    auto portal = new Portal!(typeof(con))(con, ps, 1, true);
+    auto portal = new Portal!(typeof(con))(ps, 1, true);
     ps.postParseMessage();
-    portal.bind!([FieldSpec(StaticPgTypes.BIGINT, false)])(3);
+    portal.bind!([FieldSpec(StaticPgTypes.BIGINT, false)], fullRowFormats)(3);
     portal.execute(false);
     con.sync();
     con.flush();

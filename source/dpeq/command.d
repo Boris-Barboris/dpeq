@@ -48,7 +48,7 @@ class PreparedStatement(ConnT)
         ConnT conn;
         string parsedName;  // name, reserved for this statement in PSQL connection
         bool parsed = false;
-        debug bool parseRequested = false;
+        bool parseRequested = false;
     }
 
     @property bool isParsed() { return parsed; }
@@ -94,7 +94,7 @@ class PreparedStatement(ConnT)
                 assert(!parsed);
         }
         conn.putParseMessage(parsedName, query, paramTypes[]);
-        debug parseRequested = true;
+        parseRequested = true;
     }
 
     alias parse = postParseMessage;

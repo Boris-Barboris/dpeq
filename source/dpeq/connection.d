@@ -675,13 +675,10 @@ protected:
         {
             PSQLConnection con;
             int idx;    // offset of length prefix word in writeBuffer
-            debug bool used = false;
 
             /// calculate and write length prefix
             void fill(bool includeSelf = true)
             {
-                assert(!used, "Already filled this prefix");
-                used = true;
                 T len = (con.bufHead - idx).to!T;
                 if (!includeSelf)
                 {
@@ -698,8 +695,6 @@ protected:
             /// write some specific number
             void write(T v)
             {
-                assert(!used, "Already filled this prefix");
-                used = true;
                 auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
                 assert(res == T.sizeof);
             }
