@@ -231,7 +231,7 @@ Waiting:        1   28  28.5     24     443
 Total:          1   29  28.5     24     444
 ```
 
-Select one row by id, keepalive:
+Select one row by id, keepalive (note vibe-d related failures):
 ```
 Concurrency Level:      64
 Time taken for tests:   4.728 seconds
