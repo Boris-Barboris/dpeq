@@ -329,6 +329,8 @@ class PSQLConnection(
     void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
     //  if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID) &&
     {
+        logDebug("Message to parse query: %s", query);
+
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Parse);
         auto lenTotal = reserveLen();
@@ -442,6 +444,10 @@ class PSQLConnection(
                     readyForQueryExpected--;
                     finish = true;
                     break;
+                case NoticeResponse:
+                    if (msg.data[0] != 0)
+                        logDebug(demarshalString(msg.data[1..$], msg.data.length - 2));
+                    continue;
                 default:
                     if (ic)
                         finish |= ic(msg, intError, intErrMsg);
@@ -652,7 +658,7 @@ protected:
             // TODO: make sure this code is generic enough for all sockets
             auto r = socket.receive(buf);
             assert(r == buf.length);
-            logDebug("read %d bytes", r);
+            //logDebug("read %d bytes", r);
         }
         catch (PsqlSocketException e)
         {
