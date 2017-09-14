@@ -508,10 +508,12 @@ protected:
         flush();
 
         int authType = -1;
+        Message auth_msg;
 
         pollMessages((Message msg, ref bool e, ref string eMsg) {
                 if (msg.type == BackendMessageType.Authentication)
                 {
+                    auth_msg = msg;
                     enforce!PsqlClientException(authType == -1,
                         "Unexpected second Authentication message from backend");
                     authType = demarshalNumber(msg.data[0..4]);
@@ -534,6 +536,12 @@ protected:
             case 3:
                 // cleartext password
                 putPasswordMessage(params.password);
+                break;
+            case 5:
+                // MD5 salted password
+                assert(auth_msg.data);
+                ubyte[4] salt = auth_msg.data[4 .. 8];
+                putMd5PasswordMessage(params.password, params.user, salt);
                 break;
             default:
                 throw new PsqlClientException("Unknown auth type " ~
@@ -558,6 +566,27 @@ protected:
         lenPrefix.fill();
         readyForQueryExpected++;
         logDebug("Password message buffered");
+    }
+
+    void putMd5PasswordMessage(string pw, string user, ubyte[4] salt)
+    {
+        // ty hb-ddb
+        char[32] MD5toHex(T...)(in T data)
+        {
+            import std.ascii : LetterCase;
+            import std.digest.md : md5Of, toHexString;
+            return md5Of(data).toHexString!(LetterCase.lower);
+        }
+
+        write(cast(ubyte)FrontMessageType.PasswordMessage);
+        auto lenPrefix = reserveLen();
+        char[3 + 32] mdpw;
+        mdpw[0 .. 3] = "md5";
+        mdpw[3 .. $] = MD5toHex(MD5toHex(pw, user), salt);
+        cwrite(mdpw.to!string);
+        lenPrefix.fill();
+        readyForQueryExpected++;
+        logDebug("MD5 Password message buffered");
     }
 
     void handleErrorMessage(ubyte[] data, ref string msg)
