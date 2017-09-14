@@ -81,7 +81,7 @@ To quickly hack them in and test without modifying dpeq, *DefaultFieldMarshaller
 you can modify behaviour purely from client code.
 
 ## Authrization mechanisms
-Only plaintext password supported currently. And it is not tested =).
+Trusted (trivial), password and md5 supported currently.
 
 ## Examples
 
