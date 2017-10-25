@@ -84,7 +84,9 @@ struct Message
 
 private void nop_logger(T...)(lazy T vals) {}
 
-/// assign some nop function to logDebug when you're fine with results
+/// assign some nop function to logDebug when you're fine with results.
+/// logDebug and logError are expected to accept format string and arguments,
+/// just like printf.
 class PSQLConnection(
     SocketT = StdSocket,
     alias logDebug = nop_logger,
@@ -157,7 +159,7 @@ class PSQLConnection(
         }
         catch (Exception e)
         {
-            logError("Exception caught while terminating PSQL connection: ", e.msg);
+            logError("Exception caught while terminating PSQL connection: %s", e.msg);
         }
     }
 
