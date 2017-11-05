@@ -205,6 +205,7 @@ class Portal(ConnT)
         scope auto params = SpecMarshallerRange!(specs, Marshaller)(args);
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
             params.marshallers, resCodes);
+        bound = true;
     }
 
     /// Generic InputRanges of types and field marshallers, to pass them
@@ -218,13 +219,14 @@ class Portal(ConnT)
         scope (failure) safePoint.restore();
         conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
             paramMarshRange, returnCodeRange);
+        bound = true;
     }
 
     /// explicit close for persistent prepared statements
     void postCloseMessage()
     {
         assert(bound);
-        assert(portalName.length);  // no need to close unnamed portals
+        assert(portalName.length, "no need to close unnamed portals");
         /**
         If successfully created, a named portal object lasts till the end of the
         current transaction, unless explicitly destroyed. An unnamed portal is
@@ -241,13 +243,14 @@ class Portal(ConnT)
     /// poll message queue and make sure bind was completed
     void ensureBindComplete()
     {
+        bool is_bound = false;
         bool interceptor(Message msg, ref bool err, ref string errMsg)
         {
             with (BackendMessageType)
             switch (msg.type)
             {
                 case BindComplete:
-                    bound = true;
+                    is_bound = true;
                     return true;
                 default:
                     break;
@@ -255,7 +258,7 @@ class Portal(ConnT)
             return false;
         }
         conn.pollMessages(&interceptor, true);
-        enforce!PsqlClientException(bound, "Bind failed");
+        enforce!PsqlClientException(is_bound, "Bind failed");
     }
 
     /// Send Describe+Execute command.
