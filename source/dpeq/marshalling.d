@@ -15,6 +15,7 @@ import std.conv: to;
 import std.traits;
 import std.typecons: Nullable, Tuple;
 import std.variant;
+import std.uuid: UUID;
 
 import dpeq.constants;
 import dpeq.exceptions;
@@ -93,6 +94,8 @@ template StaticFieldMarshaller(FieldSpec field)
         mixin MarshTemplate!(string, FormatCode.Text, "StringField");
     else static if (field.typeId == StaticPgTypes.TEXT)
         mixin MarshTemplate!(string, FormatCode.Text, "StringField");
+    else static if (field.typeId == StaticPgTypes.UUID)
+        mixin MarshTemplate!(UUID, FormatCode.Binary, "UuidField");
     else
         enum canDigest = false;
 }
@@ -136,13 +139,9 @@ int marshalNull(ubyte[] to)
 
 int marshalNullableFixedField(T)(ubyte[] to, lazy const(Nullable!T) ptr)
 {
-    if (T.sizeof > to.length)
-        return -2;
     if (ptr.isNull)
         return marshalNull(to);
-    auto arr = nativeToBigEndian!T(ptr.get);
-    to[0 .. arr.length] = arr;
-    return arr.length;
+    return marshalFixedField!T(to, ptr.get);
 }
 
 int marshalFixedField(T)(ubyte[] to, lazy const(T) val)
@@ -158,12 +157,7 @@ int marshalNullableStringField(Dummy = void)(ubyte[] to, lazy const(Nullable!str
 {
     if (val.isNull)
         return marshalNull(to);
-    if (val.length > to.length)
-        return -2;
-    auto arr = val.get;
-    for (int i = 0; i < arr.length; i++)
-        to[i] = cast(const(ubyte)) arr[i];
-    return arr.length.to!int;
+    return marshalStringField(to, val.get);
 }
 
 int marshalStringField(Dummy = void)(ubyte[] to, lazy const(string) s)
@@ -185,6 +179,22 @@ int marshalCstring(ubyte[] to, lazy const(string) s)
         to[i] = cast(const(ubyte)) s[i];
     to[s.length] = cast(ubyte)0;
     return (s.length + 1).to!int;
+}
+
+int marshalNullableUuidField(Dummy = void)(ubyte[] to, in Nullable!UUID val)
+{
+    if (val.isNull)
+        return marshalNull(to);
+    return marshalUuidField(to, val.get);
+}
+
+int marshalUuidField(Dummy = void)(ubyte[] to, in UUID val)
+{
+    if (to.length < 16)
+        return -2;
+    for (int i = 0; i < 16; i++)
+        to[i] = val.data[i];
+    return 16;
 }
 
 
@@ -272,6 +282,35 @@ Nullable!string demarshalNullableStringField(Dummy = void)
 string demarshalString(const(ubyte)[] from, in size_t length)
 {
     return (cast(immutable(char)*)(from.ptr))[0 .. length];
+}
+
+Nullable!UUID demarshalNullableUuidField(Dummy = void)
+(const(ubyte)[] from, in FormatCode fc, in int len)
+{
+    if (len == -1)
+        return Nullable!UUID.init;
+    return Nullable!UUID(demarshalUuidField(from, fc, len));
+}
+
+UUID demarshalUuidField(Dummy = void)
+(const(ubyte)[] from, in FormatCode fc, in int len)
+{
+    enforce!PsqlClientException(len > 0, "null uuid in non-nullable demarshaller");
+    if (fc == FormatCode.Binary)
+    {
+        enforce!PsqlClientException(len == 16, "uuid is not 16-byte");
+        ubyte[16] data;
+        for (int i = 0; i < 16; i++)
+            data[i] = from[i];
+        return UUID(data);
+    }
+    else if (fc == FormatCode.Text)
+    {
+        scope string val = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
+        return UUID(val);
+    }
+    else
+        throw new PsqlClientException("Unsupported FormatCode");
 }
 
 
