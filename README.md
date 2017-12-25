@@ -74,7 +74,7 @@ private final class SocketT
 ```
 
 ## What types are currently handled by default marshaller template?
-SMALLINT, INT, BIGINT, BOOLEAN, VARCHAR/TEXT/CHARACTER, and their Nullable
+SMALLINT, INT, BIGINT, BOOLEAN, VARCHAR/TEXT/CHARACTER, UUID and their Nullable
 counterparts. **Please send pull requests for new types!**
 To quickly hack them in and test without modifying dpeq, *DefaultFieldMarshaller*,
 *VariantConverter* and most marshalling-related templates are extensible, so
@@ -173,8 +173,8 @@ void bind_example()
     auto con = new PSQLConnection!(StdSocket, writefln, writefln)(
         BackendParams("localhost", cast(ushort)5432, "postgres", "r00tme", "drova"));
     auto ps = new PreparedStatement!(typeof(con))
-        (con, "SELECT * FROM sessions LIMIT $1;", null, true);
-    auto portal = new Portal!(typeof(con))(ps, 1, true);
+        (con, "SELECT * FROM sessions LIMIT $1;", 1, null, true);
+    auto portal = new Portal!(typeof(con))(ps, true);
     ps.postParseMessage();
     portal.bind!([FieldSpec(StaticPgTypes.BIGINT, false)], fullRowFormats)(3);
     portal.execute(false);
