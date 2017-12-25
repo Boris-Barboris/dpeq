@@ -43,7 +43,7 @@ template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
 
         // By default, this format code will be passed in Bind message
         // as parameter formatCode.
-        enum formatCode = Pre!type.formatCode;
+        enum formatCode = Pre!field.formatCode;
 
         // demarshaller must accept all formatCodes that make sence for this type.
         alias demarshal = Pre!field.demarshal;
@@ -61,7 +61,7 @@ template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
     else static if (Post!field.canDigest)
     {
         alias type = Post!field.type;
-        enum formatCode = Post!type.formatCode;
+        enum formatCode = Post!field.formatCode;
         alias demarshal = Post!field.demarshal;
         alias marshal = Post!field.marshal;
     }
