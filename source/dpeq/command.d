@@ -49,11 +49,14 @@ class PreparedStatement(ConnT)
         string parsedName;  // name, reserved for this statement in PSQL connection
         bool parsed = false;
         bool parseRequested = false;
+        short m_paramCount;
     }
 
-    @property bool isParsed() { return parsed; }
+    @property bool isParsed() const { return parsed; }
 
-    @property string preparedName() { return parsedName; }
+    @property string preparedName() const { return parsedName; }
+
+    @property short paramCount() const { return m_paramCount; }
 
     /**
     Quoting https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html:
@@ -70,13 +73,15 @@ class PreparedStatement(ConnT)
 
     That means you can leave paramTypes null.
     */
-    this(ConnT conn, string query, const(ObjectID)[] paramTypes = null, bool persist = true)
+    this(ConnT conn, string query, short paramCount, const(ObjectID)[] paramTypes = null, bool persist = true)
     {
         assert(conn);
         assert(query);
+        assert(paramCount >= 0);
         this.conn = conn;
         this.query = query;
         this.paramTypes = paramTypes;
+        this.m_paramCount = paramCount;
         if (persist)
             parsedName = conn.getNewPreparedName();
         else
@@ -142,20 +147,17 @@ class Portal(ConnT)
     {
         PreparedStatement!ConnT prepStmt;
         ConnT conn;
-        short paramCount = 0;
         string portalName;  // name, reserved for this portal in PSQL connection
         bool bound = false;
     }
 
     @property bool isBound() { return bound; }
 
-    this(PreparedStatement!ConnT ps, short paramCount, bool persist = true)
+    this(PreparedStatement!ConnT ps, bool persist = true)
     {
         assert(ps);
-        assert(paramCount >= 0);
         this.conn = ps.conn;
         prepStmt = ps;
-        this.paramCount = paramCount;
         if (persist)
             portalName = conn.getNewPortalName();
         else
@@ -184,8 +186,8 @@ class Portal(ConnT)
             Args...)
         (lazy Args args)
     {
-        assert(paramCount == Args.length);
-        assert(paramCount == specs.length);
+        assert(prepStmt.paramCount == Args.length);
+        assert(prepStmt.paramCount == specs.length);
 
         if (bound && portalName.length)
             postCloseMessage();
