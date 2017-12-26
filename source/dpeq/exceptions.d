@@ -8,9 +8,17 @@ Authors: Boris-Barboris
 
 module dpeq.exceptions;
 
-
-class PsqlClientException: Exception
+/// Easy explicit next assignment in constructor for buggy compilers like lldc
+mixin template ExceptionConstructors()
 {
+    @safe pure nothrow this(string message,
+                            Throwable next,
+                            string file =__FILE__,
+                            size_t line = __LINE__)
+    {
+        super(message, file, line, next);
+    }
+
     @safe pure nothrow this(string message,
                             string file =__FILE__,
                             size_t line = __LINE__,
@@ -18,37 +26,24 @@ class PsqlClientException: Exception
     {
         super(message, file, line, next);
     }
+}
+
+class PsqlClientException: Exception
+{
+    mixin ExceptionConstructors;
 }
 
 class PsqlConnectionClosedException: PsqlSocketException
 {
-    @safe pure nothrow this(string message,
-                            string file =__FILE__,
-                            size_t line = __LINE__,
-                            Throwable next = null)
-    {
-        super(message, file, line, next);
-    }
+    mixin ExceptionConstructors;
 }
 
 class PsqlSocketException: Exception
 {
-    @safe pure nothrow this(string message,
-                            string file =__FILE__,
-                            size_t line = __LINE__,
-                            Throwable next = null)
-    {
-        super(message, file, line, next);
-    }
+    mixin ExceptionConstructors;
 }
 
 class PsqlErrorResponseException: Exception
 {
-    @safe pure nothrow this(string message,
-                            string file =__FILE__,
-                            size_t line = __LINE__,
-                            Throwable next = null)
-    {
-        super(message, file, line, next);
-    }
+    mixin ExceptionConstructors;
 }

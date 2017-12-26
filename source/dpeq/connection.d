@@ -139,7 +139,7 @@ class PSQLConnection(
         }
         catch (Exception e)
         {
-            throw new PsqlSocketException(e.msg);
+            throw new PsqlSocketException(e.msg, e);
         }
         scope(failure) socket.close();
         initialize(bp);
