@@ -11,10 +11,10 @@ module dpeq.constants;
 /// transaction identifier
 alias Xact = int;
 
-/// Unique identifier of Psql object
+/// Unique identifier of Psql object. Usually used to identify a type.
 alias ObjectID = int;
 
-/// Format used in binding
+/// Representation of the parameter value to use when binding portal to prepared statement
 enum FormatCode: short
 {
     Text = 0,
@@ -42,11 +42,13 @@ enum StaticPgTypes: ObjectID
     PG_TYPE = 71,
     JSON = 114,
     XML = 142,
+    CIDR = 650,
     REAL = 700,
     DOUBLE = 701,
     ABSTIME = 702,
     UNKNOWN = 705,
     MONEY = 790,
+    INET = 869,
     VARCHAR = 1043,
     DATE = 1082,
     TIME = 1083,

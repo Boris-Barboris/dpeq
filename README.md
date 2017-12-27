@@ -75,7 +75,9 @@ private final class SocketT
 
 ## What types are currently handled by default marshaller template?
 SMALLINT, INT, BIGINT, BOOLEAN, VARCHAR/TEXT/CHARACTER, UUID and their Nullable
-counterparts. **Please send pull requests for new types!**
+counterparts are handles using native type representations. Types that are unknown to
+the template are handled in their string representation without any type checking.
+**Please send pull requests for new types!**
 To quickly hack them in and test without modifying dpeq, *DefaultFieldMarshaller*,
 *VariantConverter* and most marshalling-related templates are extensible, so
 you can modify behaviour purely from client code.

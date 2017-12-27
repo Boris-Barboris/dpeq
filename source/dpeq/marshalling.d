@@ -34,7 +34,7 @@ struct FieldSpec
 * gives it's native type representation, and marshalling and demarshalling
 * functions. You can extend it with two custom mappers: Pre and Post. */
 template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
-    alias Post = NopMarshaller)
+    alias Post = PromiscuousStringMarshaller)
 {
     static if (Pre!field.canDigest)
     {
@@ -76,6 +76,11 @@ template NopMarshaller(FieldSpec type)
     enum canDigest = false;
 }
 
+/// This is a fallback marshaller that simply accepts any type as a string
+template PromiscuousStringMarshaller(FieldSpec field)
+{
+    mixin MarshTemplate!(string, FormatCode.Text, "StringField");
+}
 
 /// Types handled by dpeq natively
 template StaticFieldMarshaller(FieldSpec field)
@@ -196,7 +201,6 @@ int marshalUuidField(Dummy = void)(ubyte[] to, in UUID val)
         to[i] = val.data[i];
     return 16;
 }
-
 
 
 //////////////////////////////////////////////////////////////////////////////
