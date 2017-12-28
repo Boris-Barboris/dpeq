@@ -485,6 +485,17 @@ class PSQLConnection(
             throw new PsqlErrorResponseException(intErrMsg);
     }
 
+    /// read messages from socket until all expected ReadyForQuery are recieved
+    void windupResponseStack()
+    {
+        while (readyForQueryExpected > 0)
+        {
+            Message msg = readOneMessage();
+            if (msg.type == BackendMessageType.ReadyForQuery)
+                readyForQueryExpected--;
+        }
+    }
+
     // Protected section for functions that will probably never be used by
     // client code directly. If you need them, inherit them.
 protected:
