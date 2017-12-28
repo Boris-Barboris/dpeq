@@ -365,7 +365,8 @@ class PSQLConnection(
 
     alias putSimpleQuery = putQueryMessage;
 
-    /// put Sync message into write buffer
+    /// put Sync message into write buffer. Usually you should call this after 
+    /// every portal execute message.
     void putSyncMessage()
     {
         ensureOpen();

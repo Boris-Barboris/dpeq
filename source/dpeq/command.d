@@ -32,6 +32,8 @@ import dpeq.schema;
 /// Simple query is simple. Send string to server and get responses.
 /// The most versatile, but unsafe way to issue commands to PSQL.
 /// Simple query always returns data in FormatCode.Text format.
+/// Simple queryes SHOULD NOT be accompanied by SYNC message, they
+/// trigger ReadyForQuery message anyways.
 void postSimpleQuery(ConnT)(ConnT conn, string query)
 {
     conn.putQueryMessage(query);
