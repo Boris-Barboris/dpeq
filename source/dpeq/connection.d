@@ -316,7 +316,6 @@ class PSQLConnection(
         cwrite(portal);
         write(maxRows);
         lenTotal.fill();
-        readyForQueryExpected++;
         logDebug("Execute message buffered");
     }
 
