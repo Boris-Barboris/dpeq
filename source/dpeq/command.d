@@ -315,6 +315,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 res.commandsComplete++;
                 break;
             case RowDescription:
+                // RowDescription always starts new row block
                 RowBlock rb;
                 rb.rowDesc = dpeq.schema.RowDescription(msg.data);
                 res.blocks ~= rb;
@@ -360,6 +361,10 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)
 {
     alias VariantT = ReturnType!(Converter.demarshal);
 
+    assert(block, "demarshalling null block");
+    enforce!PsqlClientException(block.rowDesc !is null,
+        "Cannot demarshal RowBlock without row description. " ~
+        "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
     ObjectID[] typeArr = new ObjectID[totalColumns];
     FormatCode[] fcArr = new FormatCode[totalColumns];

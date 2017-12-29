@@ -12,6 +12,7 @@ import std.algorithm: canFind;
 import std.exception: enforce;
 import std.bitmanip: nativeToBigEndian, bigEndianToNative;
 import std.conv: to;
+import std.meta;
 import std.traits;
 import std.typecons: Nullable, Tuple;
 import std.variant;
@@ -67,7 +68,7 @@ template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
     }
     else
         static assert(0, "Unknown typeId " ~ field.typeId.to!string ~
-            ", cannot demarshal");
+            ", cannot (de)marshal");
 }
 
 /// Can't marshal shit
@@ -124,6 +125,21 @@ mixin template MarshTemplate(NativeT, FormatCode fcode, string suffix)
     }
 }
 
+
+template FCodeOfFSpec(alias Marsh = DefaultFieldMarshaller)
+{
+    template F(FieldSpec spec)
+    {
+        enum F = Marsh!spec.formatCode;
+    }
+}
+
+/// Utility template to quickly get an array of format codes from an array of
+/// FieldSpecs
+template FSpecsToFCodes(FieldSpec[] specs, alias Marsh = DefaultFieldMarshaller)
+{
+    enum FSpecsToFCodes = [staticMap!(FCodeOfFSpec!Marsh.F, aliasSeqOf!specs)];
+}
 
 
 ///////////////////////////////////////////////////////////////////////////
@@ -356,6 +372,8 @@ class VariantConverter(alias Pre, alias Post)
         // iterate over StaticPgTypes and take demarshallers from StaticFieldMarshaller
         foreach (em; __traits(allMembers, StaticPgTypes))
         {
+            // this assumes nullable return fields. Variant will wrap Nullable
+            // of some native type.
             enum FieldSpec spec =
                 FieldSpec(__traits(getMember, StaticPgTypes, em), true);
             static if (StaticFieldMarshaller!spec.canDigest)
@@ -370,7 +388,19 @@ class VariantConverter(alias Pre, alias Post)
     static Variant demarshal(const(ubyte)[] fieldBody, ObjectID type,
         FormatCode fc, int len)
     {
-        return demarshallers[type](fieldBody, fc, len);
+        auto func = type in demarshallers;
+        if (func)
+            return (*func)(fieldBody, fc, len);
+        else
+        {
+            // fallback nullable string demarshaller
+            if (fc == FormatCode.Text)
+                return wrapToVariant!demarshalNullableStringField(fieldBody, fc, len);
+            else
+                throw new PsqlClientException(
+                    "Unable to deduce demarshaller for binary format of type " ~ 
+                    type.to!string);
+        }
     }
 }
 
