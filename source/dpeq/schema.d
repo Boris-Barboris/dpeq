@@ -103,9 +103,12 @@ struct RowDescription
     /// buffer owned by Message
     const(ubyte)[] m_buf;
 
+    /// true when row description of the row block was recieved
+    @property bool isSet() const { return m_buf !is null; }
+
     auto opIndex()
     {
-        struct FieldDescrRange
+        static struct FieldDescrRange
         {
             private const(ubyte)[] buf;
 
@@ -116,27 +119,27 @@ struct RowDescription
 
             @property bool empty()
             {
-                return (buf.length == 0 && !inited);
+                return (buf.length == 0 && !frontDemarshalled);
             }
 
-            private bool inited = false;
+            private bool frontDemarshalled = false;
             private FieldDescription _front;
 
             @property FieldDescription front()
             {
-                if (inited)
+                if (frontDemarshalled)
                     return _front;
                 assert(buf.length > 0);
                 int shift = 0;
                 _front = FieldDescription.demarshal(buf, shift);
                 buf = buf[shift .. $];
-                inited = true;
+                frontDemarshalled = true;
                 return _front;
             }
 
             void popFront()
             {
-                inited = false;
+                frontDemarshalled = false;
             }
         }
 

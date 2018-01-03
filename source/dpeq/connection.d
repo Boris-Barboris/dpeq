@@ -197,7 +197,7 @@ class PSQLConnection(
     /// marshalling or message creation.
     auto saveBuffer()
     {
-        struct WriteCursor
+        static struct WriteCursor
         {
             int offset;
             PSQLConnection conn;
@@ -223,14 +223,38 @@ class PSQLConnection(
 
 
     /** Put Bind message into write buffer.
+    *
+    * 'formatCodes' - input range of FormatCodes.
+    * quotes:
+    * The number of parameter format codes that follow (denoted C below). 
+    * This can be zero to indicate that there are no parameters or that the 
+    * parameters all use the default format (text); or one, in which case the 
+    * specified format code is applied to all parameters; or it can equal 
+    * the actual number of parameters.
+    * The parameter format codes. Each must presently be zero (text) or one (binary).
     * `parameters` is input range of marshalling delegates.
+    *
+    * 'parameters' - input range of marshaller closures. Actual data should
+    * be self-contained in this parameter.
+    *
+    * 'resultFormatCodes' - input range of query result FormatCodes.
+    * quotes:
+    *
+    * The number of result-column format codes that follow (denoted R below). 
+    * This can be zero to indicate that there are no result columns or that 
+    * the result columns should all use the default format (text); or one, 
+    * in which case the specified format code is applied to all result 
+    * columns (if any); or it can equal the actual number of result columns
+    * of the query.
+    * The result-column format codes. Each must presently be zero (text) or 
+    * one (binary).
     */
     void putBindMessage(FR, PR, RR)
         (string portal, string prepared, scope FR formatCodes, scope PR parameters,
         scope RR resultFormatCodes)
     //if (isInputRange!FR && is(Unqual!(ElementType!FR) == FormatCode) &&
     //    isInputRange!RR && is(Unqual!(ElementType!RR) == FormatCode) &&
-    //    isInputRange!PR && is(ElementType!PR == int delegate(ubyte[])))
+    //    isInputRange!PR && __traits(compiles, -1 == parameters.front()(new ubyte[2]))
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Bind);
@@ -681,20 +705,7 @@ protected:
     }
 
     /// extends writeBuffer if marshalling delegate m is lacking space (returns -2)
-    int wrappedMarsh(scope int delegate() m)
-    {
-        int bcount = m();
-        while (bcount == -2)
-        {
-            writeBuffer.length = writeBuffer.length + 4 * 4096;
-            bcount = m();
-        }
-        if (bcount > 0)
-            bufHead += bcount;
-        return bcount;
-    }
-
-    int wrappedMarsh(scope int delegate(ubyte[]) m)
+    int wrappedMarsh(MarshT)(scope MarshT m)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
         while (bcount == -2)
@@ -711,7 +722,7 @@ protected:
     int write(T)(T val)
         if (isNumeric!T)
     {
-        return wrappedMarsh(() => marshalFixedField(writeBuffer[bufHead .. $], val));
+        return wrappedMarsh((ubyte[] buf) => marshalFixedField(buf, val));
     }
 
     /// Reserve space in write buffer for length prefix and return
@@ -719,7 +730,7 @@ protected:
     auto reserveLen(T = int)()
         if (isNumeric!T && !isUnsigned!T)
     {
-        struct Len
+        static struct Len
         {
             PSQLConnection con;
             int idx;    // offset of length prefix word in writeBuffer
@@ -755,12 +766,12 @@ protected:
 
     int write(string s)
     {
-        return wrappedMarsh(() => marshalStringField(writeBuffer[bufHead .. $], s));
+        return wrappedMarsh((ubyte[] buf) => marshalStringField(buf, s));
     }
 
     int cwrite(string s)
     {
-        return wrappedMarsh(() => marshalCstring(writeBuffer[bufHead .. $], s));
+        return wrappedMarsh((ubyte[] buf) => marshalCstring(buf, s));
     }
 
     /// read exactly one message from the socket

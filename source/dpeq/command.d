@@ -361,8 +361,7 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)
 {
     alias VariantT = ReturnType!(Converter.demarshal);
 
-    assert(block, "demarshalling null block");
-    enforce!PsqlClientException(block.rowDesc !is null,
+    enforce!PsqlClientException(block.rowDesc.isSet,
         "Cannot demarshal RowBlock without row description. " ~
         "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
@@ -380,7 +379,7 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)
         typeArr[i++] = fdesc.type;
     }
 
-    struct RowDemarshaller
+    static struct RowDemarshaller
     {
     private:
         short column = 0;
@@ -420,7 +419,7 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)
         }
     }
 
-    struct RowsRange
+    static struct RowsRange
     {
     private:
         Message[] dataRows;
@@ -486,12 +485,15 @@ template SpecMapper(alias Demarshaller)
 /// Returns RandomAccessRange of lazy-demarshalled tuples.
 /// Customazable with Demarshaller template.
 /// Will append parsed field descriptions to fieldDescs array if passed.
-auto blockToTuples(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
+auto blockToTuples
+    (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (RowBlock block, FieldDescription[]* fieldDescs = null)
 {
     alias ResTuple = TupleBuilder!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
-
+    enforce!PsqlClientException(block.rowDesc.isSet,
+        "Cannot demarshal RowBlock without row description. " ~
+        "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
     enforce!PsqlClientException(totalColumns == spec.length,
         "Expected %d columnts in a row, got %d".format(spec.length, totalColumns));
@@ -533,7 +535,7 @@ auto blockToTuples(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller
         return res;
     }
 
-    struct RowsRange
+    static struct RowsRange
     {
     private:
         Message[] dataRows;
@@ -565,7 +567,7 @@ auto blockToTuples(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller
 }
 
 
-static class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
+class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
 {
     static const(FormatCode)[spec.length] codes;
 
@@ -600,7 +602,7 @@ auto blockToTuples
             len = demarshalNumber(from[0 .. 4]);
             //writeln("col ", i, ", len = ", len, " from = ", from);
             vbuf = from[4 .. max(4, len + 4)];
-            FormatCode fcode = FormatCodesOfSpec!(spec, Demarshaller).codes[i];
+            FormatCode fcode = FCodeOfFSpec!(Demarshaller).F!(colSpec);
             res[i] = Demarshaller!(colSpec).demarshal(vbuf, fcode, len);
             from = from[max(4, len + 4) .. $];
         }
@@ -609,7 +611,7 @@ auto blockToTuples
         return res;
     }
 
-    struct RowsRange
+    static struct RowsRange
     {
     private:
         Message[] dataRows;
