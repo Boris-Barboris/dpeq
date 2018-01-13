@@ -37,7 +37,7 @@ Simple query always returns data in FormatCode.Text format.
 Simple queries SHOULD NOT be accompanied by SYNC message, they
 trigger ReadyForQuery message anyways. 
 
-Every postSimpleQuery or Portal.execute MUST be accompanied by getQueryResults
+Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults
 call. */
 void postSimpleQuery(ConnT)(ConnT conn, string query)
 {
@@ -246,10 +246,7 @@ class Portal(ConnT)
 
     /** Send Describe+Execute command.
     If describe is false, no RowDescription message will be requested
-    from PSQL - useful for optimistic statically-typed querying. 
-    
-    Every postSimpleQuery or Portal.execute MUST be accompanied by getQueryResults
-    call. */
+    from PSQL - useful for optimistic statically-typed querying. */
     void execute(bool describe = true)
     {
         assert(bindRequested);

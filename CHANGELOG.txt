@@ -1,0 +1,7 @@
+13.01.2018:  v0.1.1 -> v0.2.0
+    Breaking changes:
+    - blockToVariants return type changed to NullableVariant - dpeq-defined subtype of std.variant.Variant
+    - Portal constructor parameter 'paramCount' moved to PreparedStatement constructor
+
+    Various bugfixes and additional definitions, made well before an idea to
+    start this changelog file.

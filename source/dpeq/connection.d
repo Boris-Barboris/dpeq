@@ -396,8 +396,10 @@ class PSQLConnection(
 
     alias putSimpleQuery = putQueryMessage;
 
-    /// put Sync message into write buffer. Usually you should call this after 
-    /// every portal execute message.
+    /** 
+    Put Sync message into write buffer. Usually you should call this after 
+    every portal execute message.
+    Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
     void putSyncMessage()
     {
         ensureOpen();

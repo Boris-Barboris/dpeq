@@ -117,7 +117,7 @@ section will try to explain in detail, what is happening in the code.
     auto con = new ConT(
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
     // when you want to close the connection, call...
-    con.terminate();    // will swallow all exception
+    con.terminate();    // will swallow all exceptions
 ```
 ### Create table using *simpleQuery*
 ```D
@@ -188,7 +188,7 @@ void createTestSchema(ConT)(ConT con)
     /*
     postSimpleQuery is related to EQ's predecessor, simple query
     protocol. It is a text-only message format, wich is well suited for
-    parameter-less, reliable (no user input) queries.
+    parameterless, reliable (no user input) queries.
 
     postSimpleQuery takes our "CREATE TABLE..." sql query and writes it to
     con's write buffer. 
@@ -215,8 +215,10 @@ void createTestSchema(ConT)(ConT con)
     QueryResult is a blob of unmarshalled messages. Usually, it contains
     contents of RowDescription message and arrays of actual data rows.
 
-    Every postSimpleQuery or Portal.execute MUST be accompanied by getQueryResults
-    call.
+    Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by 
+    getQueryResults call. Generally, you should be very careful with
+    ReadyForQuery messages. Also, take a look at PSQLConnection.delayedPoll
+    method.
     */
     con.getQueryResults();
 }
