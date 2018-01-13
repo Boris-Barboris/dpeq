@@ -64,7 +64,7 @@ string createTableCommand()
             col.typeId.pgTypeName ~ (col.nullable ? "" : " NOT NULL");
     }
     res ~= colDefs.join(", ") ~ ");";
-    writeln(res);
+    writeln("table will be created with query: ", res);
     return res;
 }
 
@@ -79,7 +79,7 @@ string insertCommand()
     foreach (i, col; aliasSeqOf!testTableSpec)
         parDefs ~= "$" ~ (i + 1).to!string;
     res ~= parDefs.join(", ") ~ ") RETURNING *;";
-    writeln(res);
+    writeln("insert will be ran with query: ", res);
     return res;
 }
 
@@ -121,10 +121,16 @@ void main()
     assert(res.blocks.length == 1);
     // convert result to tuples
     auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
-    auto rowDesc = res.blocks[0].rowDesc[].array;
+    FieldDescription[] rowDesc = res.blocks[0].rowDesc[].array;
+    writeln("received field descriptions:");
+    foreach (vald; rowDesc)
+    {
+        writeln(["name: ", vald.name, ", type: ", vald.type.to!string, 
+            " , format code: ", vald.formatCode.to!string].join(", "));
+    }
     foreach (row; rows)
     {
-        writeln("row recieved, it's tuple representation:");
+        writeln("\nrow received, it's tuple representation:");
         foreach (i, col; aliasSeqOf!testTableSpec)
         {
             writeln(rowDesc[i].name, " = ", row[i]);
@@ -134,7 +140,7 @@ void main()
     auto variantRows = blockToVariants(res.blocks[0]);
     foreach (row; variantRows)
     {
-        writeln("row recieved, it's variant representation:");
+        writeln("\nrow received, it's variant representation:");
         foreach (col; row)
             writeln(col.type, " ", col.toString);
     }

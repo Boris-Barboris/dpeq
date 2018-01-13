@@ -54,7 +54,7 @@ final class StdSocket
         if (r == 0 && buf.length > 0)
             throw new PsqlSocketException("Connection closed");
         if (r == Socket.ERROR)
-            throw new PsqlSocketException("Socket.ERROR on recieve");
+            throw new PsqlSocketException("Socket.ERROR on receive");
         return r;
     }
 }
@@ -72,7 +72,7 @@ struct BackendParams
 }
 
 
-/// Message, recieved from backend
+/// Message, received from backend
 struct Message
 {
     BackendMessageType type;
@@ -216,11 +216,12 @@ class PSQLConnection(
     }
 
 
-    ////////////////////////////////////////
+    /*
+    ////////////////////////////////////////////////////////////////////////////
     // All sorts of messages
     // https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
-    ///////////////////////////////////////
-
+    ////////////////////////////////////////////////////////////////////////////
+    */
 
     /** Put Bind message into write buffer.
     *
@@ -423,9 +424,9 @@ class PSQLConnection(
     }
 
     /** this function reads messages from the socket in loop until:
-    *     1). if finishOnError is set and ErrorResponse is recieved, function
+    *     1). if finishOnError is set and ErrorResponse is received, function
     *         throws immediately.
-    *     2). if ReadyForQuery message is recieved.
+    *     2). if ReadyForQuery message is received.
     *     3). interceptor delegate provided returned `true`.
     *   Interceptor delegate is used to customize the logic. If the message is
     *   not ReadyForQuery or ErrorResponse, it is passed to interceptor. It may
@@ -510,7 +511,7 @@ class PSQLConnection(
             throw new PsqlErrorResponseException(intErrMsg);
     }
 
-    /// read messages from socket until all expected ReadyForQuery are recieved
+    /// read messages from socket until all expected ReadyForQuery are received
     void windupResponseStack()
     {
         while (readyForQueryExpected > 0)
@@ -569,7 +570,7 @@ protected:
             }, true);
 
         enforce!PsqlClientException(authType != -1,
-            "No Authentication message recieved");
+            "No Authentication message received");
         switch (authType)
         {
             case 0:

@@ -8,7 +8,8 @@ Authors: Boris-Barboris
 
 module dpeq.exceptions;
 
-/// Easy explicit next assignment in constructor for buggy compilers like lldc
+
+/// mixes in standard exception constructors that call super correctly
 mixin template ExceptionConstructors()
 {
     @safe pure nothrow this(string message,

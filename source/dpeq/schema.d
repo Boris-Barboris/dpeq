@@ -74,7 +74,7 @@ struct FieldDescription
     }
 
     /// backing buffer, owned by Message
-    const(ubyte)[] m_buf;
+    private const(ubyte)[] m_buf;
 
     /// length of name C-string wich spans the head of backing buffer
     private int nameLength;
@@ -103,7 +103,7 @@ struct RowDescription
     /// buffer owned by Message
     const(ubyte)[] m_buf;
 
-    /// true when row description of the row block was recieved
+    /// true when row description of the row block was received
     @property bool isSet() const { return m_buf !is null; }
 
     auto opIndex()
@@ -151,7 +151,7 @@ struct RowDescription
 
 
 /// Simple queries may include multiple SELECTs, wich will return
-/// multiple row types.
+/// multiple blocks of rows.
 struct RowBlock
 {
     RowDescription rowDesc;

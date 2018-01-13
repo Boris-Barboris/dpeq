@@ -25,9 +25,11 @@ import dpeq.marshalling;
 import dpeq.schema;
 
 
+/*
 /////////////////////////////////////
 // Different forms of command input
 /////////////////////////////////////
+*/
 
 /// Simple query is simple. Send string to server and get responses.
 /// The most versatile, but unsafe way to issue commands to PSQL.
@@ -251,28 +253,29 @@ class Portal(ConnT)
 }
 
 
+/*
 /////////////////////////////////////
 // Functions to get query results
 /////////////////////////////////////
+*/
 
-
-/// Generic query result
+/// Generic query result, returned by getQueryResults
 struct QueryResult
 {
-    /// Set if EmptyQueryResponse was met
+    /// Set if EmptyQueryResponse message was met
     bool empty;
 
-    /// Number of CommandComplete messages recieved. Mostly used
+    /// Number of CommandComplete messages received. Mostly used
     /// in simple query workflow, since extended protocol uses only
     /// ReadyForQuery.
     short commandsComplete;
 
-    /// data
+    /// Data blocks, each block being an array of rows sharing one row description (schema).
     RowBlock[] blocks;
 }
 
 
-/// Generic, dynamic method, suitable for both simple and prepared queries.
+/// Generic method, suitable for both simple and prepared queries.
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;
@@ -318,11 +321,11 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
 
 
 
-
+/*
 /////////////////////////////////////////////////////////////////
 // Functions used to transform query results to native data types
 /////////////////////////////////////////////////////////////////
-
+*/
 
 //import std.stdio;
 
