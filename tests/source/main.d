@@ -125,8 +125,8 @@ void main()
     writeln("received field descriptions:");
     foreach (vald; rowDesc)
     {
-        writeln(["name: ", vald.name, ", type: ", vald.type.to!string, 
-            " , format code: ", vald.formatCode.to!string].join(", "));
+        writeln(["name: " ~ vald.name, "type: " ~ vald.type.to!string, 
+            "format code: " ~ vald.formatCode.to!string].join(", "));
     }
     foreach (row; rows)
     {
