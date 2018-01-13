@@ -345,13 +345,42 @@ UUID demarshalUuidField(Dummy = void)
 /////////////////////////////////////////////////////////////////
 */
 
-// prototype of variant demarshaller
+/// prototype of a nullable variant demarshaller, used in converter
 alias VariantDemarshaller =
-    Variant function(const(ubyte)[] buf, in FormatCode fc, in int len);
+    NullableVariant function(const(ubyte)[] buf, in FormatCode fc, in int len);
 
-Variant wrapToVariant(alias f)(const(ubyte)[] buf, in FormatCode fc, in int len)
+/// std.variant.Variant subtype that is better suited for holding SQL null.
+/// Null NullableVariant is essentially a valueless Variant instance.
+struct NullableVariant
 {
-    return Variant(f(buf, fc, len));
+    Variant variant;
+    alias variant this;
+
+    this(T)(T value)
+    {
+        variant = value;
+    }
+
+    /// this property will be true if psql return null in this column
+    @safe bool isNull() const { return !variant.hasValue; }
+
+    string toString()
+    {
+        if (isNull)
+            // may conflict with "null" string, but this can be said about any string
+            return "null";
+        else
+            return variant.toString();
+    }
+}
+
+NullableVariant wrapToVariant(alias f)(const(ubyte)[] buf, in FormatCode fc, in int len)
+{
+    auto nullableResult = f(buf, fc, len);
+    if (nullableResult.isNull)
+        return NullableVariant();
+    else
+        return NullableVariant(nullableResult.get);
 }
 
 /// Default converter hash map. You can extend it, or define your own.
@@ -378,7 +407,7 @@ class VariantConverter(alias Marsh = DefaultFieldMarshaller)
         demarshallers = cast(immutable VariantDemarshaller[ObjectID]) aa;
     }
 
-    static Variant demarshal(
+    static NullableVariant demarshal(
         const(ubyte)[] fieldBody, ObjectID type, FormatCode fc, int len)
     {
         immutable(VariantDemarshaller)* func = type in demarshallers;
@@ -388,7 +417,7 @@ class VariantConverter(alias Marsh = DefaultFieldMarshaller)
         {
             // fallback to nullable string demarshaller
             if (fc == FormatCode.Text)
-                return wrapToVariant!demarshalNullableStringField(fieldBody, fc, len);
+                return demarshallers[StaticPgTypes.VARCHAR](fieldBody, fc, len);
             else
                 throw new PsqlClientException(
                     "Unable to deduce demarshaller for binary format of a type " ~ 

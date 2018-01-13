@@ -7,9 +7,6 @@ before_script:
   - psql -c 'create database dpeqtestdb;' -U postgres
 d:
   - dmd
-  - gdc
   - ldc
 script:
-  - pushd tests && dub -b debug && popd
-after_script:
-  - psql -c 'dropdb dpeqtestdb; create database dpeqtestdb;' -U postgres
+  - pushd tests && dub -b debug

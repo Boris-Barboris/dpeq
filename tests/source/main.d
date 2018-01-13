@@ -8,11 +8,12 @@ Authors: Boris-Barboris
 
 import dpeq;
 
-import std.array: join;
+import std.array: join, array;
 import std.conv: to;
 import std.typecons: Nullable;
 import std.meta;
 import std.stdio;
+import std.variant: visit;
 import std.uuid: UUID, randomUUID;
 
 
@@ -63,6 +64,7 @@ string createTableCommand()
             col.typeId.pgTypeName ~ (col.nullable ? "" : " NOT NULL");
     }
     res ~= colDefs.join(", ") ~ ");";
+    writeln(res);
     return res;
 }
 
@@ -76,7 +78,8 @@ string insertCommand()
     string[] parDefs;
     foreach (i, col; aliasSeqOf!testTableSpec)
         parDefs ~= "$" ~ (i + 1).to!string;
-    res ~= colDefs.join(", ") ~ ") RETURNING *;";
+    res ~= parDefs.join(", ") ~ ") RETURNING *;";
+    writeln(res);
     return res;
 }
 
@@ -84,7 +87,7 @@ void main()
 {
     alias ConT = PSQLConnection!(StdSocket);
     auto con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "", "dpeqtestdb"));
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
     createTestSchema(con);
     auto ps = new PreparedStatement!ConT(con, insertCommand(), testTableSpec.length, null, false);
     auto portal = new Portal!ConT(ps, false);
@@ -99,7 +102,7 @@ void main()
         6,
         Nullable!int(-3),
         "123",
-        Nullable!string(),
+        Nullable!string(),  // null
         "asdjaofdfad",
         Nullable!string("12393"),
         randomUUID(),
@@ -107,7 +110,7 @@ void main()
         3.14f,
         Nullable!float(float.nan),
         -3.14,
-        Nullable!double(),
+        Nullable!double(),  // null
         "192.168.0.1",
         Nullable!string("127.0.0.1")
     );
@@ -118,18 +121,22 @@ void main()
     assert(res.blocks.length == 1);
     // convert result to tuples
     auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+    auto rowDesc = res.blocks[0].rowDesc[].array;
     foreach (row; rows)
     {
-        pragma(msg, "tuple-row type ", typeof(row));
-        writeln("row = ", row);
+        writeln("row recieved, it's tuple representation:");
+        foreach (i, col; aliasSeqOf!testTableSpec)
+        {
+            writeln(rowDesc[i].name, " = ", row[i]);
+        }
     }
     // convert result to variants
     auto variantRows = blockToVariants(res.blocks[0]);
     foreach (row; variantRows)
     {
-        writeln("iterating over data row");
+        writeln("row recieved, it's variant representation:");
         foreach (col; row)
-            writeln("column ", col);
+            writeln(col.type, " ", col.toString);
     }
 }
 
