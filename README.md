@@ -437,8 +437,9 @@ void main()
     auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
     foreach (row; rows) // actual call to demarshallers happens here
     {
+        import std.range: iota;
         writeln("\nrow received, it's tuple representation:");
-        foreach (i, col; aliasSeqOf!testTableSpec)
+        foreach (i; aliasSeqOf!(iota(0, testTableSpec.length).array))
         {
             writeln(rowDesc[i].name, " = ", row[i]);
         }
