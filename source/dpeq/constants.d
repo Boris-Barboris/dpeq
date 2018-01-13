@@ -41,7 +41,7 @@ enum StaticPgTypes: ObjectID
     XML = 142,
     CIDR = 650,
     REAL = 700,     /// 32-bit float
-    DOUBLE = 701,   /// 64-bit double
+    DOUBLE = 701,   /// 64-bit double, is actually called 'double precision'
     ABSTIME = 702,
     UNKNOWN = 705,
     MONEY = 790,
@@ -53,6 +53,20 @@ enum StaticPgTypes: ObjectID
 }
 
 alias PgType = StaticPgTypes;
+
+/// returns postgress-compatible name of the type
+string pgTypeName(ObjectID pgt)
+{
+    import std.conv: to;
+    StaticPgTypes spgt = pgt.to!StaticPgTypes;
+    switch (spgt)
+    {
+        case (StaticPgTypes.DOUBLE):
+            return "double precision";
+        default:
+            return spgt.to!string;
+    }
+}
 
 /// https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
 enum FrontMessageType: char
