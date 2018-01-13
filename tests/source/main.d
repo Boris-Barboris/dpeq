@@ -85,7 +85,7 @@ void main()
 {
     alias ConT = PSQLConnection!(StdSocket);
     auto con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "", "travis"));
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "", "dpeqtestdb"));
     createTestSchema(con);
     auto ps = new PreparedStatement!ConT(con, insertCommand(), testTableSpec.length, null, false);
     auto portal = new Portal!ConT(ps, false);

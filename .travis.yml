@@ -4,7 +4,7 @@ addons:
 git:
   depth: 3
 before_script:
-  - psql -c 'create database travis;' -U postgres
+  - psql -c 'create database dpeqtestdb;' -U postgres
 d:
   - dmd
   - gdc
@@ -12,4 +12,4 @@ d:
 script:
   - pushd tests && dub -b debug && popd
 after_script:
-  - psql -c 'dropdb travis; create database travis;' -U postgres
+  - psql -c 'dropdb dpeqtestdb; create database dpeqtestdb;' -U postgres
