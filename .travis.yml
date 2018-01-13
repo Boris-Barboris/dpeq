@@ -1,0 +1,15 @@
+language: d
+addons:
+  postgresql: "9.5"
+git:
+  depth: 3
+before_script:
+  - psql -c 'create database travis;' -U postgres
+d:
+  - dmd
+  - gdc
+  - ldc
+script:
+  - pushd tests && dub -b debug && popd
+after_script:
+  - psql -c 'dropdb travis; create database travis;' -U postgres
