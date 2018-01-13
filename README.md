@@ -10,7 +10,7 @@ messages in sensible manner. On top of that, dpeq includes extensible
 schema-oriented marshalling functionality, wich maps PSQL types to their 
 binary or text representations, native to D.   
 
-Here is a list of good links get yourself familiar with EQ protocol, wich may
+Here is a list of good links to get yourself familiar with EQ protocol, wich may
 help you to understand the nature of the messages being passed:   
 https://www.postgresql.org/docs/9.5/static/protocol.html   
 https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
