@@ -59,9 +59,8 @@ string createTableCommand()
     string[] colDefs;
     foreach (i, col; aliasSeqOf!testTableSpec)
     {
-        colDefs ~= "col" ~ i.to!string ~ " " ~ col.typeId.to!StaticPgTypes.to!string;
-        static if (!col.nullable)
-            colDefs ~= " NOT NULL";
+        colDefs ~= "col" ~ i.to!string ~ " " ~ 
+            col.typeId.to!StaticPgTypes.to!string ~ (col.nullable ? "" : " NOT NULL");
     }
     res ~= colDefs.join(", ") ~ ");";
     return res;

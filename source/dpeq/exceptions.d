@@ -16,7 +16,7 @@ mixin template ExceptionConstructors()
                             string file =__FILE__,
                             size_t line = __LINE__)
     {
-        super(message, file, line, next);
+        super(message, next, file, line);
     }
 
     @safe pure nothrow this(string message,
