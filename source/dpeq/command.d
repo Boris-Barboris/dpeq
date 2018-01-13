@@ -164,7 +164,7 @@ class Portal(ConnT)
             FormatCode[] resCodes,
             alias Marshaller = DefaultFieldMarshaller,
             Args...)
-        (lazy Args args)
+        (in Args args)
     {
         assert(prepStmt.paramCount == Args.length);
         assert(prepStmt.paramCount == specs.length);
