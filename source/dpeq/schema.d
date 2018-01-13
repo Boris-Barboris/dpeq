@@ -1,5 +1,5 @@
 /**
-Schema elements.
+Structures that describe a schema of query results.
 
 Copyright: Copyright Boris-Barboris 2017.
 License: MIT
@@ -74,7 +74,7 @@ struct FieldDescription
     }
 
     /// backing buffer, owned by Message
-    private const(ubyte)[] m_buf;
+    const(ubyte)[] m_buf;
 
     /// length of name C-string wich spans the head of backing buffer
     private int nameLength;
@@ -94,7 +94,7 @@ struct FieldDescription
 
 struct RowDescription
 {
-    /// number of fields in a row
+    /// number of fields (columns) in a row
     @property short fieldCount()
     {
         return demarshalNumber!short(m_buf[0 .. 2]);
@@ -103,9 +103,10 @@ struct RowDescription
     /// buffer owned by Message
     const(ubyte)[] m_buf;
 
-    /// true when row description of the row block was received
+    /// true when row description of this row block was received
     @property bool isSet() const { return m_buf !is null; }
 
+    /// Slice operator, wich returns InputRange of lazily-demarshalled FieldDescriptions.
     auto opIndex()
     {
         static struct FieldDescrRange
@@ -150,7 +151,8 @@ struct RowDescription
 }
 
 
-/// Simple queries may include multiple SELECTs, wich will return
+/// Array of rows, returned by the server, wich all share one row
+/// description. Simple queries may include multiple SELECTs, wich will return
 /// multiple blocks of rows.
 struct RowBlock
 {

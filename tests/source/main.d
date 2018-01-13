@@ -45,14 +45,9 @@ enum FieldSpec[] testTableSpec = [
     FieldSpec(PgType.INET, true)
 ];
 
-template FormatCodeFromFieldSpec(FieldSpec spec)
-{
-    enum FormatCodeFromFieldSpec =
-        DefaultFieldMarshaller!(spec).formatCode;
-}
+enum FormatCode[] testTableRowFormats = FSpecsToFCodes!(testTableSpec);
 
-enum FormatCode[] testTableRowFormats =
-    [staticMap!(FormatCodeFromFieldSpec, aliasSeqOf!testTableSpec)];
+alias TestTupleT = TupleForSpec!testTableSpec;
 
 string createTableCommand()
 {
@@ -89,10 +84,12 @@ void main()
     auto con = new ConT(
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
     createTestSchema(con);
-    auto ps = new PreparedStatement!ConT(con, insertCommand(), testTableSpec.length, null, false);
+    auto ps = new PreparedStatement!ConT(con, insertCommand(), 
+        testTableSpec.length, null, false);
     auto portal = new Portal!ConT(ps, false);
     ps.postParseMessage();
-    portal.bind!(testTableSpec, testTableRowFormats)(
+
+    TestTupleT sentTuple = TestTupleT(
         false,
         Nullable!bool(true),
         123L,
@@ -108,19 +105,21 @@ void main()
         randomUUID(),
         Nullable!UUID(randomUUID()),
         3.14f,
-        Nullable!float(float.nan),
+        Nullable!float(float.infinity),
         -3.14,
         Nullable!double(),  // null
         "192.168.0.1",
         Nullable!string("127.0.0.1")
     );
+
+    portal.bind!(testTableSpec, testTableRowFormats)(sentTuple.expand);
     portal.execute();
+
     con.sync();
     con.flush();
     auto res = con.getQueryResults();
     assert(res.blocks.length == 1);
-    // convert result to tuples
-    auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+    
     FieldDescription[] rowDesc = res.blocks[0].rowDesc[].array;
     writeln("received field descriptions:");
     foreach (vald; rowDesc)
@@ -128,6 +127,9 @@ void main()
         writeln(["name: " ~ vald.name, "type: " ~ vald.type.to!string, 
             "format code: " ~ vald.formatCode.to!string].join(", "));
     }
+
+    // convert result to tuples
+    auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
     foreach (row; rows)
     {
         writeln("\nrow received, it's tuple representation:");
@@ -135,7 +137,9 @@ void main()
         {
             writeln(rowDesc[i].name, " = ", row[i]);
         }
+        assert(row == sentTuple, "Sent and recieved tuples don't match");
     }
+
     // convert result to variants
     auto variantRows = blockToVariants(res.blocks[0]);
     foreach (row; variantRows)

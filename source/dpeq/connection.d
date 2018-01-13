@@ -8,6 +8,8 @@ Authors: Boris-Barboris
 
 module dpeq.connection;
 
+import core.time: seconds;
+
 import std.exception: enforce;
 import std.conv: to;
 import std.traits;
@@ -20,8 +22,9 @@ import dpeq.marshalling;
 
 
 
-/// I don't want to care what sockets you use,
-/// just make them duck-type and exception-compatible with this one
+/// std.socket wrapper wich is compatible with PSQLConnection. 
+/// If you want to use custom sockets (vibe-d, unix-domain etc), make them 
+/// duck-type and exception-compatible with this one.
 final class StdSocket
 {
     protected Socket m_socket;
@@ -29,6 +32,8 @@ final class StdSocket
     this(string host, ushort port)
     {
         m_socket = new TcpSocket();
+        // receive timeout to the better safe than sorry 2 minutes value
+        m_socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, seconds(120));
         m_socket.connect(new InternetAddress(host, port));
     }
 
@@ -54,7 +59,7 @@ final class StdSocket
         if (r == 0 && buf.length > 0)
             throw new PsqlSocketException("Connection closed");
         if (r == Socket.ERROR)
-            throw new PsqlSocketException("Socket.ERROR on receive");
+            throw new PsqlSocketException("Socket.ERROR on receive: " ~ m_socket.getErrorText());
         return r;
     }
 }
@@ -377,6 +382,7 @@ class PSQLConnection(
         logDebug("Parse message buffered");
     }
 
+    /// put Query message (simple query protocol)
     void putQueryMessage(string query)
     {
         ensureOpen();
@@ -403,6 +409,8 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
+    /// When this callback returns true, pollMessages will exit it's loop
+    /// (or one of it's loops in case of delayed pollers).
     alias InterceptorT = bool delegate(Message, ref bool, ref string);
 
     protected
@@ -411,7 +419,6 @@ class PSQLConnection(
         {
             InterceptorT interceptor;
             bool finishOnError;
-            bool served = true;
         }
         DelayedPoller[] delayedPollers;
     }
@@ -705,7 +712,7 @@ protected:
         }
     }
 
-    /// extends writeBuffer if marshalling delegate m is lacking space (returns -2)
+    /// extends writeBuffer if marshalling functor m is lacking space (returns -2)
     int wrappedMarsh(MarshT)(scope MarshT m)
     {
         int bcount = m(writeBuffer[bufHead .. $]);

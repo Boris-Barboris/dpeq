@@ -31,11 +31,14 @@ import dpeq.schema;
 /////////////////////////////////////
 */
 
-/// Simple query is simple. Send string to server and get responses.
-/// The most versatile, but unsafe way to issue commands to PSQL.
-/// Simple query always returns data in FormatCode.Text format.
-/// Simple queryes SHOULD NOT be accompanied by SYNC message, they
-/// trigger ReadyForQuery message anyways.
+/** Simple query is simple. Send string to server and get responses.
+The most versatile, but unsafe way to issue commands to PSQL.
+Simple query always returns data in FormatCode.Text format.
+Simple queries SHOULD NOT be accompanied by SYNC message, they
+trigger ReadyForQuery message anyways. 
+
+Every postSimpleQuery or Portal.execute MUST be accompanied by getQueryResults
+call. */
 void postSimpleQuery(ConnT)(ConnT conn, string query)
 {
     conn.putQueryMessage(query);
@@ -166,10 +169,11 @@ class Portal(ConnT)
         assert(prepStmt.paramCount == Args.length);
         assert(prepStmt.paramCount == specs.length);
 
-        if (bindRequested && portalName.length)
-            postCloseMessage();
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
+
+        if (bindRequested && portalName.length)
+            postCloseMessage();
 
         // TODO: if possible, verify spec against parameter types of prepStmt
 
@@ -192,10 +196,10 @@ class Portal(ConnT)
     void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
         scope RR returnCodeRange)
     {
-        if (bindRequested && portalName.length)
-            postCloseMessage();
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
+        if (bindRequested && portalName.length)
+            postCloseMessage();
         conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
             paramMarshRange, returnCodeRange);
         bindRequested = true;
@@ -240,9 +244,12 @@ class Portal(ConnT)
         enforce!PsqlClientException(is_bound, "Bind failed");
     }
 
-    /// Send Describe+Execute command.
-    /// If describe is false, no RowDescription message will be requested
-    /// from PSQL - useful for optimistic statically-typed querying.
+    /** Send Describe+Execute command.
+    If describe is false, no RowDescription message will be requested
+    from PSQL - useful for optimistic statically-typed querying. 
+    
+    Every postSimpleQuery or Portal.execute MUST be accompanied by getQueryResults
+    call. */
     void execute(bool describe = true)
     {
         assert(bindRequested);
@@ -436,9 +443,9 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
 
 
 /// for row spec `spec` build native tuple representation.
-template TupleBuilder(FieldSpec[] spec, alias Demarshaller)
+template TupleForSpec(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
 {
-    alias TupleBuilder =
+    alias TupleForSpec =
         Tuple!(
             staticMap!(
                 SpecMapper!(Demarshaller).Func,
@@ -465,7 +472,7 @@ auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (RowBlock block, FieldDescription[]* fieldDescs = null)
 {
-    alias ResTuple = TupleBuilder!(spec, Demarshaller);
+    alias ResTuple = TupleForSpec!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
     enforce!PsqlClientException(block.rowDesc.isSet,
         "Cannot demarshal RowBlock without row description. " ~
@@ -557,12 +564,12 @@ class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
 
 /// Returns RandomAccessRange of lazy-demarshalled tuples.
 /// Customazable with Demarshaller template.
-/// This version does not require RowDescription, and cannot validate row that good.
+/// This version does not require RowDescription, but cannot validate row that good.
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (Message[] data)
 {
-    alias ResTuple = TupleBuilder!(spec, Demarshaller);
+    alias ResTuple = TupleForSpec!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
 
     //import std.stdio;

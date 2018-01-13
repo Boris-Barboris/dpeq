@@ -23,7 +23,8 @@ import dpeq.exceptions;
 
 
 
-/// Query parameter type descriptor
+/// Value type descriptor, constisting of an oid of the type itself and a
+/// boolean flag wich indicates wether the value can be null.
 struct FieldSpec
 {
     ObjectID typeId;
@@ -93,6 +94,8 @@ template StaticFieldMarshaller(FieldSpec field)
     else static if (field.typeId == StaticPgTypes.SMALLINT)
         mixin MarshTemplate!(short, FormatCode.Binary, "FixedField");
     else static if (field.typeId == StaticPgTypes.INT)
+        mixin MarshTemplate!(int, FormatCode.Binary, "FixedField");
+    else static if (field.typeId == StaticPgTypes.OID)
         mixin MarshTemplate!(int, FormatCode.Binary, "FixedField");
     else static if (field.typeId == StaticPgTypes.VARCHAR)
         mixin MarshTemplate!(string, FormatCode.Text, "StringField");
