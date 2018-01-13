@@ -47,14 +47,11 @@ class PreparedStatement(ConnT)
     {
         const(ObjectID)[] paramTypes;
         string query;
+        bool parseRequested;
         ConnT conn;
         string parsedName;  // name, reserved for this statement in PSQL connection
-        bool parsed = false;
-        bool parseRequested = false;
         short m_paramCount;
     }
-
-    @property bool isParsed() const { return parsed; }
 
     @property string preparedName() const { return parsedName; }
 
@@ -94,12 +91,6 @@ class PreparedStatement(ConnT)
     /// existing portals), create a new one.
     void postParseMessage()
     {
-        assert(!parseRequested);
-        debug
-        {
-            if (parsedName.length)
-                assert(!parsed);
-        }
         conn.putParseMessage(parsedName, query, paramTypes[]);
         parseRequested = true;
     }
@@ -109,19 +100,19 @@ class PreparedStatement(ConnT)
     /// explicit close for persistent prepared statements
     void postCloseMessage()
     {
-        assert(parsed);
-        assert(parsedName.length);  // no need to close unnamed statements
+        assert(parseRequested);
+        assert(parsedName.length, "no need to close unnamed prepared statements");
         /** An unnamed prepared statement lasts only until the next Parse
         statement specifying the unnamed statement as destination is issued.
         (Note that a simple Query message also destroys the unnamed statement.) */
         conn.putCloseMessage('S', parsedName);
-        parsed = false;
+        parseRequested = false;
     }
 
     /// poll message queue and make sure parse was completed
     void ensureParseComplete()
     {
-        assert(parseRequested);
+        bool parsed = false;
         bool interceptor(Message msg, ref bool err, ref string errMsg)
         {
             with (BackendMessageType)
@@ -129,7 +120,6 @@ class PreparedStatement(ConnT)
             {
                 case ParseComplete:
                     parsed = true;
-                    parseRequested = false;
                     return true;
                 default:
                     break;
@@ -150,10 +140,8 @@ class Portal(ConnT)
         PreparedStatement!ConnT prepStmt;
         ConnT conn;
         string portalName;  // name, reserved for this portal in PSQL connection
-        bool bound = false;
+        bool bindRequested = false;
     }
-
-    @property bool isBound() { return bound; }
 
     this(PreparedStatement!ConnT ps, bool persist = true)
     {
@@ -166,21 +154,6 @@ class Portal(ConnT)
             portalName = "";
     }
 
-    static struct SpecMarshallerRange(FieldSpec[] specs, alias Marshaller)
-    {
-        alias DlgT = int delegate(ubyte[]);
-        DlgT[specs.length] marshallers;
-
-        this(Args...)(lazy Args args)
-        {
-            foreach(i, paramSpec; aliasSeqOf!specs)
-            {
-                marshallers[i] =
-                    (ubyte[] to) => Marshaller!paramSpec.marshal(to, args[i]);
-            }
-        }
-    }
-
     void bind(
             FieldSpec[] specs,
             FormatCode[] resCodes,
@@ -191,25 +164,25 @@ class Portal(ConnT)
         assert(prepStmt.paramCount == Args.length);
         assert(prepStmt.paramCount == specs.length);
 
-        if (bound && portalName.length)
+        if (bindRequested && portalName.length)
             postCloseMessage();
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
 
         // TODO: if possible, verify spec against parameter types of prepStmt
 
-        // Same result format codes are used for result rows
-        template CodeFromSpec(FieldSpec a)
-        {
-            enum CodeFromSpec = Marshaller!a.formatCode;
-        }
+        enum fcodesr = [staticMap!(FCodeOfFSpec!(Marshaller).F, aliasSeqOf!specs)];
 
-        enum fcodes = staticMap!(CodeFromSpec, aliasSeqOf!specs);
-        enum fcodesr = [fcodes];
-        scope auto params = SpecMarshallerRange!(specs, Marshaller)(args);
+        alias DlgT = int delegate(ubyte[]);
+        DlgT[specs.length] marshallers;
+        foreach(i, paramSpec; aliasSeqOf!specs)
+        {
+            marshallers[i] =
+                (ubyte[] to) => Marshaller!paramSpec.marshal(to, args[i]);
+        }
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
-            params.marshallers, resCodes);
-        bound = true;
+            marshallers, resCodes);
+        bindRequested = true;
     }
 
     /// Generic InputRanges of types and field marshallers, to pass them
@@ -217,19 +190,19 @@ class Portal(ConnT)
     void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
         scope RR returnCodeRange)
     {
-        if (bound && portalName.length)
+        if (bindRequested && portalName.length)
             postCloseMessage();
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
         conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
             paramMarshRange, returnCodeRange);
-        bound = true;
+        bindRequested = true;
     }
 
     /// explicit close for persistent prepared statements
     void postCloseMessage()
     {
-        assert(bound);
+        assert(bindRequested);
         assert(portalName.length, "no need to close unnamed portals");
         /**
         If successfully created, a named portal object lasts till the end of the
@@ -241,7 +214,7 @@ class Portal(ConnT)
         by another Bind message, but this is not required for the unnamed portal.
         */
         conn.putCloseMessage('P', portalName);
-        bound = false;
+        bindRequested = false;
     }
 
     /// poll message queue and make sure bind was completed
@@ -270,6 +243,7 @@ class Portal(ConnT)
     /// from PSQL - useful for optimistic statically-typed querying.
     void execute(bool describe = true)
     {
+        assert(bindRequested);
         if (describe)
             conn.putDescribeMessage('P', portalName);
         conn.putExecuteMessage(portalName);
@@ -356,7 +330,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
 /// Specific flavor of Variant is derived from Converter.demarshal call return type.
 /// Look into marshalling.VariantConverter for demarshal implementation examples.
 /// Will append parsed field descriptions to fieldDescs array if passed.
-auto blockToVariants(alias Converter = NopedDefaultConverter)
+auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
     (RowBlock block, FieldDescription[]* fieldDescs = null)
 {
     alias VariantT = ReturnType!(Converter.demarshal);
@@ -459,7 +433,6 @@ auto blockToVariants(alias Converter = NopedDefaultConverter)
 
 
 /// for row spec `spec` build native tuple representation.
-/// Plugin!FieldSpec must evaluate to native type if you want it to work.
 template TupleBuilder(FieldSpec[] spec, alias Demarshaller)
 {
     alias TupleBuilder =

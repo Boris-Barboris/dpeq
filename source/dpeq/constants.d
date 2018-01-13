@@ -1,20 +1,18 @@
 /**
 Constants of various nature.
 
-Copyright: Copyright Boris-Barboris 2017.
+Copyright: Copyright Boris-Barboris 2017-2018.
 License: MIT
 Authors: Boris-Barboris
 */
 
 module dpeq.constants;
 
-/// transaction identifier
-alias Xact = int;
 
-/// Unique identifier of Psql object. Usually used to identify a type.
+/// Unique identifier of a Psql object. Mostly used to identify a type in dpeq.
 alias ObjectID = int;
 
-/// Representation of the parameter value to use when binding portal to prepared statement
+/// Format of a marshalled value.
 enum FormatCode: short
 {
     Text = 0,
@@ -22,8 +20,7 @@ enum FormatCode: short
 }
 
 /** Small portion of statically known ids of Psql types, wich is enough
-* to start connection and request full type list. And no, I'm not going
-* to sit here and copypaste them, it's a job for run time. */
+* to start connection and request full type list. */
 enum StaticPgTypes: ObjectID
 {
     NULL = 0,
@@ -43,8 +40,8 @@ enum StaticPgTypes: ObjectID
     JSON = 114,
     XML = 142,
     CIDR = 650,
-    REAL = 700,
-    DOUBLE = 701,
+    REAL = 700,     /// 32-bit float
+    DOUBLE = 701,   /// 64-bit double
     ABSTIME = 702,
     UNKNOWN = 705,
     MONEY = 790,
@@ -54,6 +51,8 @@ enum StaticPgTypes: ObjectID
     TIME = 1083,
     UUID = 2950,
 }
+
+alias PgType = StaticPgTypes;
 
 /// https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
 enum FrontMessageType: char
