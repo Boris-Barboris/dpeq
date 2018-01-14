@@ -283,6 +283,15 @@ void main()
     I believe it is an alternative to PSQL ::<type> syntax for explicit casting,
     but I am not sure exactly when to use it. In my experience, you can simply
     leave the array empty.
+
+    Relevant quote:
+    "...If successfully created, a named prepared-statement object lasts till the 
+    end of the current session, unless explicitly destroyed. An unnamed prepared
+    statement lasts only until the next Parse statement specifying the unnamed 
+    statement as destination is issued. (Note that a simple Query message also
+    destroys the unnamed statement.) Named prepared statements must be 
+    explicitly closed before they can be redefined by another Parse message, 
+    but this is not required for the unnamed statement."
     */
     auto ps = new PreparedStatement!ConT(con, insertCommand(), 
         testTableSpec.length, null, false);
@@ -290,6 +299,23 @@ void main()
     /*
     Portals represent parameter values, bound to particular prepared statement.
     Just like prepared statement, they can be named and unnamed.
+
+    Relevant quote:
+    "Once a prepared statement exists, it can be readied for execution using a 
+    Bind message. The Bind message gives the name of the source prepared statement 
+    (empty string denotes the unnamed prepared statement), the name of the 
+    destination portal (empty string denotes the unnamed portal), and the values 
+    to use for any parameter placeholders present in the prepared statement... 
+    Bind also specifies the format to use for any data returned by the query; 
+    the format can be specified overall, or per-column...
+
+    If successfully created, a named portal object lasts till the end of the 
+    current transaction, unless explicitly destroyed. An unnamed portal is 
+    destroyed at the end of the transaction, or as soon as the next Bind 
+    statement specifying the unnamed portal as destination is issued. 
+    (Note that a simple Query message also destroys the unnamed portal.) 
+    Named portals must be explicitly closed before they can be redefined by 
+    another Bind message, but this is not required for the unnamed portal."
     */
     auto portal = new Portal!ConT(ps, false);
 
@@ -343,6 +369,17 @@ void main()
     demarshalling functions require the QueryResult to have RowDescription.
     One of the 'blockToTuples' overloads does not, and is therefore recommended
     for folks of all ages.
+
+    quote:
+    "Query planning typically occurs when the Bind message is processed. If 
+    the prepared statement has no parameters, or is executed repeatedly, the 
+    server might save the created plan and re-use it during subsequent Bind 
+    messages for the same prepared statement. However, it will do so only if 
+    it finds that a generic plan can be created that is not much less efficient 
+    than a plan that depends on the specific parameter values supplied...
+      Once a portal exists, it can be executed using an Execute message. 
+    The Execute message specifies the portal name (empty string denotes the 
+    unnamed portal)..."
     */
     portal.execute();
 

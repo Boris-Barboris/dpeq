@@ -337,7 +337,9 @@ class PSQLConnection(
         logDebug("Describe message buffered");
     }
 
-    // non-zero maxRows will generate PortalSuspended messages, too much hustle
+    /**
+    non-zero maxRows will generate PortalSuspended messages, wich are
+    currently not handled by dpeq commands */
     void putExecuteMessage(string portal = "", int maxRows = 0)
     {
         ensureOpen();
@@ -349,6 +351,15 @@ class PSQLConnection(
         logDebug("Execute message buffered");
     }
 
+    /**
+    Quote:
+    "The Flush message does not cause any specific output to be generated, 
+    but forces the backend to deliver any data pending in its output buffers. 
+    A Flush must be sent after any extended-query command except Sync, if the 
+    frontend wishes to examine the results of that command before issuing more 
+    commands. Without Flush, messages returned by the backend will be combined 
+    into the minimum possible number of packets to minimize network overhead."
+    */
     void putFlushMessage()
     {
         ensureOpen();
