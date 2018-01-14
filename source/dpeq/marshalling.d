@@ -165,14 +165,14 @@ int marshalNull(ubyte[] to)
 // I don't really know how versatile are these functions, so let's keep
 // them FixedField instead of NumericField
 
-int marshalNullableFixedField(T)(ubyte[] to, lazy const(Nullable!T) ptr)
+int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr)
 {
     if (ptr.isNull)
         return marshalNull(to);
     return marshalFixedField!T(to, ptr.get);
 }
 
-int marshalFixedField(T)(ubyte[] to, lazy const(T) val)
+int marshalFixedField(T)(ubyte[] to, in T val)
 {
     if (T.sizeof > to.length)
         return -2;
@@ -181,14 +181,14 @@ int marshalFixedField(T)(ubyte[] to, lazy const(T) val)
     return arr.length;
 }
 
-int marshalNullableStringField(Dummy = void)(ubyte[] to, lazy const(Nullable!string) val)
+int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
 {
     if (val.isNull)
         return marshalNull(to);
     return marshalStringField(to, val.get);
 }
 
-int marshalStringField(Dummy = void)(ubyte[] to, lazy const(string) s)
+int marshalStringField(Dummy = void)(ubyte[] to, in string s)
 {
     if (s.length > to.length)
         return -2;
@@ -199,7 +199,7 @@ int marshalStringField(Dummy = void)(ubyte[] to, lazy const(string) s)
 
 /// Service function, used for marshalling of protocol messages.
 /// Data strings are passed without trailing nulls.
-int marshalCstring(ubyte[] to, lazy const(string) s)
+int marshalCstring(ubyte[] to, in string s)
 {
     if (s.length + 1 > to.length)
         return -2;
@@ -423,7 +423,7 @@ class VariantConverter(alias Marsh = DefaultFieldMarshaller)
                 return demarshallers[StaticPgTypes.VARCHAR](fieldBody, fc, len);
             else
                 throw new PsqlClientException(
-                    "Unable to deduce demarshaller for binary format of a type " ~ 
+                    "Unable to deduce demarshaller for binary format of a type " ~
                     type.to!string);
         }
     }
