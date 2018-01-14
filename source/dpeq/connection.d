@@ -22,8 +22,8 @@ import dpeq.marshalling;
 
 
 
-/// std.socket wrapper wich is compatible with PSQLConnection. 
-/// If you want to use custom sockets (vibe-d, unix-domain etc), make them 
+/// std.socket wrapper wich is compatible with PSQLConnection.
+/// If you want to use custom sockets (vibe-d, unix-domain etc), make them
 /// duck-type and exception-compatible with this one.
 final class StdSocket
 {
@@ -111,6 +111,11 @@ class PSQLConnection(
         int preparedCounter = 0;
         int portalCounter = 0;
     }
+
+    /// Number of ReadyForQuery messages that are yet to be recieved
+    /// from the database. May be useful for checking wether getQueryResults
+    /// would block forever.
+    @property int expectedRFQCount() const { return readyForQueryExpected; }
 
     invariant
     {
@@ -232,10 +237,10 @@ class PSQLConnection(
     *
     * 'formatCodes' - input range of FormatCodes.
     * quotes:
-    * The number of parameter format codes that follow (denoted C below). 
-    * This can be zero to indicate that there are no parameters or that the 
-    * parameters all use the default format (text); or one, in which case the 
-    * specified format code is applied to all parameters; or it can equal 
+    * The number of parameter format codes that follow (denoted C below).
+    * This can be zero to indicate that there are no parameters or that the
+    * parameters all use the default format (text); or one, in which case the
+    * specified format code is applied to all parameters; or it can equal
     * the actual number of parameters.
     * The parameter format codes. Each must presently be zero (text) or one (binary).
     * `parameters` is input range of marshalling delegates.
@@ -246,13 +251,13 @@ class PSQLConnection(
     * 'resultFormatCodes' - input range of query result FormatCodes.
     * quotes:
     *
-    * The number of result-column format codes that follow (denoted R below). 
-    * This can be zero to indicate that there are no result columns or that 
-    * the result columns should all use the default format (text); or one, 
-    * in which case the specified format code is applied to all result 
+    * The number of result-column format codes that follow (denoted R below).
+    * This can be zero to indicate that there are no result columns or that
+    * the result columns should all use the default format (text); or one,
+    * in which case the specified format code is applied to all result
     * columns (if any); or it can equal the actual number of result columns
     * of the query.
-    * The result-column format codes. Each must presently be zero (text) or 
+    * The result-column format codes. Each must presently be zero (text) or
     * one (binary).
     */
     void putBindMessage(FR, PR, RR)
@@ -353,11 +358,11 @@ class PSQLConnection(
 
     /**
     Quote:
-    "The Flush message does not cause any specific output to be generated, 
-    but forces the backend to deliver any data pending in its output buffers. 
-    A Flush must be sent after any extended-query command except Sync, if the 
-    frontend wishes to examine the results of that command before issuing more 
-    commands. Without Flush, messages returned by the backend will be combined 
+    "The Flush message does not cause any specific output to be generated,
+    but forces the backend to deliver any data pending in its output buffers.
+    A Flush must be sent after any extended-query command except Sync, if the
+    frontend wishes to examine the results of that command before issuing more
+    commands. Without Flush, messages returned by the backend will be combined
     into the minimum possible number of packets to minimize network overhead."
     */
     void putFlushMessage()
@@ -407,8 +412,8 @@ class PSQLConnection(
 
     alias putSimpleQuery = putQueryMessage;
 
-    /** 
-    Put Sync message into write buffer. Usually you should call this after 
+    /**
+    Put Sync message into write buffer. Usually you should call this after
     every portal execute message.
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
     void putSyncMessage()
