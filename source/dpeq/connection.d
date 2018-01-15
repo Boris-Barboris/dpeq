@@ -443,7 +443,7 @@ class PSQLConnection(
 
     /// Register callbacks wich will be executed in FIFO order next time
     /// someone calls pollMessages.
-    void delayedPoll(InterceptorT interceptor, bool finishOnError)
+    void delayedPoll(InterceptorT interceptor, bool finishOnError = false)
     {
         delayedPollers ~= DelayedPoller(interceptor, finishOnError);
     }

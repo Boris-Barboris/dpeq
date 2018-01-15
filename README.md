@@ -2,19 +2,19 @@
 
 [![Build Status](https://travis-ci.org/Boris-Barboris/dpeq.svg?branch=master)](https://travis-ci.org/Boris-Barboris/dpeq)
 
-**dpeq** is a source library that implements client side of PostgreSQL 
-extended query (EQ) protocol. EQ is a stateful message-based binary protocol 
-working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes 
-to hold the required state and utility functions, that send and recieve protocol 
-messages in sensible manner. On top of that, dpeq includes extensible 
-schema-oriented marshalling functionality, wich maps PSQL types to their 
-binary or text representations, native to D.   
+**dpeq** is a source library that implements client side of PostgreSQL
+extended query (EQ) protocol. EQ is a stateful message-based binary protocol
+working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
+to hold the required state and utility functions, that send and recieve protocol
+messages in sensible manner. On top of that, dpeq includes extensible
+schema-oriented marshalling functionality, wich maps PSQL types to their
+binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
-help you to understand the nature of the messages being passed:   
-https://www.postgresql.org/docs/9.5/static/protocol.html   
-https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
-https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
+help you to understand the nature of the messages being passed:
+https://www.postgresql.org/docs/9.5/static/protocol.html
+https://www.postgresql.org/docs/9.5/static/protocol-flow.html
+https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
 
 Many thanks to authors of https://github.com/pszturmaj/ddb and
 https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
@@ -25,7 +25,7 @@ https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
   type (so you can easily use it with vibe-d) and logging functions.
 * source/dpeq/schema.d - structures that describe query results.
 * source/dpeq/command.d - classes and functions that implement typical operations
-  on the connection. You can find examples of *PreparedStatement* and *Portal* 
+  on the connection. You can find examples of *PreparedStatement* and *Portal*
   class implementations there. *getQueryResults* function
   from this module is bread and butter for response demarshalling. *blockToVariants*
   and *blockToTuples* are example demarshalling implementations that allow you to
@@ -81,11 +81,11 @@ final class SocketT
 ```
 
 ## Supported native types
-SMALLINT, INT, OID, BIGINT, BOOLEAN, UUID, REAL, DOUBLE PRECISION 
-are handled using their respective binary type representations. Types that are 
-unknown to the marshalling template are transferred using their text representation, 
+SMALLINT, INT, OID, BIGINT, BOOLEAN, UUID, REAL, DOUBLE PRECISION
+are handled using their respective binary type representations. Types that are
+unknown to the marshalling template are transferred using their text representation,
 thus delegating additional parsing and validation check to PostgreSQL server.
-To quickly hack missing types in, *DefaultFieldMarshaller*, *VariantConverter* 
+To quickly hack missing types in, *DefaultFieldMarshaller*, *VariantConverter*
 and most marshalling-related templates accept template parameters wich can be
 used to override or extend type mapping from the client code.
 
@@ -101,10 +101,10 @@ section will try to explain in detail, what is happening in the code.
     /* Dpeq source is heavily templated. Most functions and classes accept one or
     more template parameters that customize their behaviour. It is convenient
     to define a number of aliases that instantiate those templates and shorten
-    definitions. 
-    
+    definitions.
+
     This aliases ConT to dpeq connection that uses Phobos TCP sockets*/
-    alias ConT = PSQLConnection!(StdSocket);    // 
+    alias ConT = PSQLConnection!(StdSocket);    //
 
     /* PSQLConnection constructor does the following:
         - allocate internally used storage for write buffer
@@ -121,16 +121,16 @@ section will try to explain in detail, what is happening in the code.
 ```
 ### Create table using *simpleQuery*
 ```D
-/* 
+/*
 Most marshalling functions in dpeq are statically typed. Remote, postgresql
 types are treated as an absolute truth, not the other way around. Dpeq templates
 then perform lookup and validate types you pass to dpeq functions during
 compilation. Although PSQLConnection and Portal interfaces (bind-related
 calls are generic) are flexible enough to use them with runtime-dispatched, OOP
-values, dpeq only implements static lookup. 
+values, dpeq only implements static lookup.
 
-You can think of it this way: values passed to the socket can be represented by 
-statically known tuple, or by a range of interfaces that implement marshalling 
+You can think of it this way: values passed to the socket can be represented by
+statically known tuple, or by a range of interfaces that implement marshalling
 methods. Ultimately, PSQLConnection accepts the second type, however the rest
 of the library wrap it in the first type.
 
@@ -167,17 +167,17 @@ string createTableCommand()
     string[] colDefs;
     foreach (i, col; aliasSeqOf!testTableSpec)
     {
-        colDefs ~= "col" ~ i.to!string ~ " " ~ 
+        colDefs ~= "col" ~ i.to!string ~ " " ~
             col.typeId.pgTypeName ~ (col.nullable ? "" : " NOT NULL");
     }
     res ~= colDefs.join(", ") ~ ");";   // std.array.join
     writeln("table will be created with query: ", res);
     /* prints:
-    table will be created with query: CREATE TABLE dpeq_test (col0 BOOLEAN 
-    NOT NULL, col1 BOOLEAN, col2 BIGINT NOT NULL, col3 BIGINT, col4 SMALLINT 
-    NOT NULL, col5 SMALLINT, col6 INT NOT NULL, col7 INT, col8 VARCHAR NOT NULL, 
-    col9 VARCHAR, col10 TEXT NOT NULL, col11 TEXT, col12 UUID NOT NULL, 
-    col13 UUID, col14 REAL NOT NULL, col15 REAL, col16 double precision 
+    table will be created with query: CREATE TABLE dpeq_test (col0 BOOLEAN
+    NOT NULL, col1 BOOLEAN, col2 BIGINT NOT NULL, col3 BIGINT, col4 SMALLINT
+    NOT NULL, col5 SMALLINT, col6 INT NOT NULL, col7 INT, col8 VARCHAR NOT NULL,
+    col9 VARCHAR, col10 TEXT NOT NULL, col11 TEXT, col12 UUID NOT NULL,
+    col13 UUID, col14 REAL NOT NULL, col15 REAL, col16 double precision
     NOT NULL, col17 double precision, col18 INET NOT NULL, col19 INET);
     */
     return res;
@@ -191,12 +191,12 @@ void createTestSchema(ConT)(ConT con)
     parameterless, reliable (no user input) queries.
 
     postSimpleQuery takes our "CREATE TABLE..." sql query and writes it to
-    con's write buffer. 
+    con's write buffer.
     */
     con.postSimpleQuery(createTableCommand());
-    
+
     /*
-    flush() actually sends connection's write buffer to the socket. 
+    flush() actually sends connection's write buffer to the socket.
     PSQLConnection maintains it's own write buffer in order to
     increase the efficiency. Lesser segment fragmentation and syscall frequency
     are an obvious advantage. You can also protect the server from reading junk
@@ -207,15 +207,15 @@ void createTestSchema(ConT)(ConT con)
     con.flush();
 
     /*
-    getQueryResult calls PSQLConnection.pollMessages wich repeatedly reads 
+    getQueryResult calls PSQLConnection.pollMessages wich repeatedly reads
     messages from the socket and fills QueryResult structure with the raw data.
-    Polling stops when ErrorResponse or ReadyForQuery messages are recieved, or
-    the socket throws. Error then is rethrown.
+    Polling stops when ReadyForQuery message is recieved, or the socket throws.
+    ErroResponse message, if met, causes this call to throw.
 
     QueryResult is a blob of unmarshalled messages. Usually, it contains
     contents of RowDescription message and arrays of actual data rows.
 
-    Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by 
+    Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by
     getQueryResults call. Generally, you should be very careful with
     ReadyForQuery messages. Also, take a look at PSQLConnection.delayedPoll
     method.
@@ -226,7 +226,7 @@ void createTestSchema(ConT)(ConT con)
 ### Insert example using prepared statement and a portal
 ```D
 
-/* 
+/*
 FSpecsToFCodes converts array of FieldSpecs to the array of FormatCodes.
 EQ protocol requires client to explicitly specify return type format codes, if
 the client wants to use binary data transfer. If not, all values in responses
@@ -256,9 +256,9 @@ string insertCommand()
     res ~= parDefs.join(", ") ~ ") RETURNING *;";
     writeln("insert will be ran with query: ", res);
     /* prints:
-    insert will be ran with query: INSERT INTO dpeq_test (col0, col1, col2, 
-    col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, 
-    col14, col15, col16, col17, col18, col19) VALUES ($1, $2, $3, $4, $5, $6, 
+    insert will be ran with query: INSERT INTO dpeq_test (col0, col1, col2,
+    col3, col4, col5, col6, col7, col8, col9, col10, col11, col12, col13,
+    col14, col15, col16, col17, col18, col19) VALUES ($1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING *;
     */
     return res;
@@ -279,21 +279,21 @@ void main()
         - unnamed is volatile and is easily reparsed.
         - persist flag in PreparedStatement constructor controls the type of
             the prepared statement.
-    Fourth argument is an optional array of explicitly stated parameter types. 
+    Fourth argument is an optional array of explicitly stated parameter types.
     I believe it is an alternative to PSQL ::<type> syntax for explicit casting,
     but I am not sure exactly when to use it. In my experience, you can simply
     leave the array empty.
 
     Relevant quote:
-    "...If successfully created, a named prepared-statement object lasts till the 
+    "...If successfully created, a named prepared-statement object lasts till the
     end of the current session, unless explicitly destroyed. An unnamed prepared
-    statement lasts only until the next Parse statement specifying the unnamed 
+    statement lasts only until the next Parse statement specifying the unnamed
     statement as destination is issued. (Note that a simple Query message also
-    destroys the unnamed statement.) Named prepared statements must be 
-    explicitly closed before they can be redefined by another Parse message, 
+    destroys the unnamed statement.) Named prepared statements must be
+    explicitly closed before they can be redefined by another Parse message,
     but this is not required for the unnamed statement."
     */
-    auto ps = new PreparedStatement!ConT(con, insertCommand(), 
+    auto ps = new PreparedStatement!ConT(con, insertCommand(),
         testTableSpec.length, null, false);
 
     /*
@@ -301,20 +301,20 @@ void main()
     Just like prepared statement, they can be named and unnamed.
 
     Relevant quote:
-    "Once a prepared statement exists, it can be readied for execution using a 
-    Bind message. The Bind message gives the name of the source prepared statement 
-    (empty string denotes the unnamed prepared statement), the name of the 
-    destination portal (empty string denotes the unnamed portal), and the values 
-    to use for any parameter placeholders present in the prepared statement... 
-    Bind also specifies the format to use for any data returned by the query; 
+    "Once a prepared statement exists, it can be readied for execution using a
+    Bind message. The Bind message gives the name of the source prepared statement
+    (empty string denotes the unnamed prepared statement), the name of the
+    destination portal (empty string denotes the unnamed portal), and the values
+    to use for any parameter placeholders present in the prepared statement...
+    Bind also specifies the format to use for any data returned by the query;
     the format can be specified overall, or per-column...
 
-    If successfully created, a named portal object lasts till the end of the 
-    current transaction, unless explicitly destroyed. An unnamed portal is 
-    destroyed at the end of the transaction, or as soon as the next Bind 
-    statement specifying the unnamed portal as destination is issued. 
-    (Note that a simple Query message also destroys the unnamed portal.) 
-    Named portals must be explicitly closed before they can be redefined by 
+    If successfully created, a named portal object lasts till the end of the
+    current transaction, unless explicitly destroyed. An unnamed portal is
+    destroyed at the end of the transaction, or as soon as the next Bind
+    statement specifying the unnamed portal as destination is issued.
+    (Note that a simple Query message also destroys the unnamed portal.)
+    Named portals must be explicitly closed before they can be redefined by
     another Bind message, but this is not required for the unnamed portal."
     */
     auto portal = new Portal!ConT(ps, false);
@@ -341,7 +341,7 @@ void main()
         Nullable!float(float.infinity),
         -3.14,
         Nullable!double(),  // null
-        // notice, that PgType.INET , wich is unknown to binary 
+        // notice, that PgType.INET , wich is unknown to binary
         // marshalling templates, is represented by string in TestTupleT.
         "192.168.0.1",
         Nullable!string("127.0.0.1")
@@ -361,7 +361,7 @@ void main()
 
     /*
     Portal.execute puts the Execute message into the write buffer. On recieving,
-    PSQL fires the query plan and starts pushing results to it's 
+    PSQL fires the query plan and starts pushing results to it's
     end of the socket.
 
     Optional parameter 'describe', when set to false, prevents the server from
@@ -371,14 +371,14 @@ void main()
     for folks of all ages.
 
     quote:
-    "Query planning typically occurs when the Bind message is processed. If 
-    the prepared statement has no parameters, or is executed repeatedly, the 
-    server might save the created plan and re-use it during subsequent Bind 
-    messages for the same prepared statement. However, it will do so only if 
-    it finds that a generic plan can be created that is not much less efficient 
+    "Query planning typically occurs when the Bind message is processed. If
+    the prepared statement has no parameters, or is executed repeatedly, the
+    server might save the created plan and re-use it during subsequent Bind
+    messages for the same prepared statement. However, it will do so only if
+    it finds that a generic plan can be created that is not much less efficient
     than a plan that depends on the specific parameter values supplied...
-      Once a portal exists, it can be executed using an Execute message. 
-    The Execute message specifies the portal name (empty string denotes the 
+      Once a portal exists, it can be executed using an Execute message.
+    The Execute message specifies the portal name (empty string denotes the
     unnamed portal)..."
     */
     portal.execute();
@@ -386,18 +386,18 @@ void main()
     /*
     Sync message is a synchronization mechanism. The best way to describe,
     why is it needed, is to quote the docs:
-    
-    "At completion of each series of extended-query messages, the frontend 
-    should issue a Sync message. This parameterless message causes the backend 
-    to close the current transaction if it's not inside a BEGIN/COMMIT 
-    transaction block ("close" meaning to commit if no error, or roll back 
-    if error). Then a ReadyForQuery response is issued. The purpose of Sync is 
+
+    "At completion of each series of extended-query messages, the frontend
+    should issue a Sync message. This parameterless message causes the backend
+    to close the current transaction if it's not inside a BEGIN/COMMIT
+    transaction block ("close" meaning to commit if no error, or roll back
+    if error). Then a ReadyForQuery response is issued. The purpose of Sync is
     to provide a resynchronization point for error recovery. When an error is
-     detected while processing any extended-query message, the backend issues 
-     ErrorResponse, then reads and discards messages until a Sync is reached, 
-     then issues ReadyForQuery and returns to normal message processing. (But 
-     note that no skipping occurs if an error is detected while processing Sync 
-     — this ensures that there is one and only one ReadyForQuery sent for 
+     detected while processing any extended-query message, the backend issues
+     ErrorResponse, then reads and discards messages until a Sync is reached,
+     then issues ReadyForQuery and returns to normal message processing. (But
+     note that no skipping occurs if an error is detected while processing Sync
+     — this ensures that there is one and only one ReadyForQuery sent for
      each Sync.)"
 
      TLDR: call sync() before each getQueryResults, IF you are using EQ. Sync
@@ -405,9 +405,9 @@ void main()
      Simple Query protocol message, breaking your next getQueryResults.
     */
     con.sync();
-    
+
     con.flush();    // flush write buffer to socket
-    
+
     // allocate RAM for reponse and return it's raw representation
     auto res = con.getQueryResults();
     assert(res.blocks.length == 1);
@@ -422,7 +422,7 @@ void main()
     /*
     Row descriptions in result blocks are treated as HTTP headers -
     rarely needed hence lazily demarshalled. rowDesc should be sliced ([])
-    in order to get an InputRange of FieldDescription structures, each 
+    in order to get an InputRange of FieldDescription structures, each
     describing it's own column. The line below eagerly allocates an array
     in order to support random access, and fills it with partially-demarshalled
     FieldDescriptions.
@@ -438,7 +438,7 @@ void main()
         are not reallocated and span the memory of the original message,
         received from the socket.
         */
-        writeln(["name: " ~ vald.name, "type: " ~ vald.type.to!string, 
+        writeln(["name: " ~ vald.name, "type: " ~ vald.type.to!string,
             "format code: " ~ vald.formatCode.to!string].join(", "));
         /* prints:
         received field descriptions:
@@ -509,8 +509,8 @@ void main()
     /*
     Alternative to the tuple converter is a variant converter, wich
     looks onto row description and deduces the type of demarshaller
-    dynamically. It returns RandomAccessRange of InputRanges of 
-    lazily-demarshalled variants. 
+    dynamically. It returns RandomAccessRange of InputRanges of
+    lazily-demarshalled variants.
     By default it's the subtype of std.variant.Variant, wich has convenient
     isNull function defined to keep it in line with Nullable interface.
     */
