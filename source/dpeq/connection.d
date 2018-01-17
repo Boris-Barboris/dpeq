@@ -104,8 +104,10 @@ class PSQLConnection(
         int bufHead = 0;
         bool open = false;
 
-        /// number of expected readyForQuery responses
+        // number of expected readyForQuery responses
         int readyForQueryExpected = 0;
+
+        TransactionStatus tstatus = TransactionStatus.IDLE;
 
         /// counters to generate unique prepared statement and portal ids
         int preparedCounter = 0;
@@ -116,6 +118,10 @@ class PSQLConnection(
     /// from the database. May be useful for checking wether getQueryResults
     /// would block forever.
     @property int expectedRFQCount() const { return readyForQueryExpected; }
+
+    /// Transaction status, reported by the last received ReadyForQuery message.
+    /// For a new connection TransactionStatus.IDLE is returned.
+    @property TransactionStatus transactionStatus() const { return tstatus; }
 
     invariant
     {
@@ -494,6 +500,7 @@ class PSQLConnection(
                     enforce!PsqlClientException(readyForQueryExpected > 0,
                         "Unexpected ReadyForQuery message");
                     readyForQueryExpected--;
+                    tstatus = cast(TransactionStatus) msg.data[0];
                     finish = true;
                     break;
                 case NoticeResponse:

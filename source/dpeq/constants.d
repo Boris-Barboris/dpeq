@@ -114,3 +114,13 @@ enum BackendMessageType: char
     ReadyForQuery = 'Z',
     RowDescription = 'T'
 }
+
+/** Content of the ReadyForQuery response message, indicating backend
+transaction status. */
+enum TransactionStatus: char
+{
+    IDLE = 'I',     /// idle (not in transaction block)
+    TBLOCK = 'T',   /// in transaction block
+    /// in failed transaction block (queries will be rejected until block is ended)
+    FAILEDBLOCK = 'E'
+}
