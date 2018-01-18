@@ -35,7 +35,7 @@ import dpeq.schema;
 The most versatile, but unsafe way to issue commands to PSQL.
 Simple query always returns data in FormatCode.Text format.
 Simple queries SHOULD NOT be accompanied by SYNC message, they
-trigger ReadyForQuery message anyways. 
+trigger ReadyForQuery message anyways.
 
 Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults
 call. */
@@ -266,15 +266,13 @@ class Portal(ConnT)
 /// Generic query result, returned by getQueryResults
 struct QueryResult
 {
-    /// Set if EmptyQueryResponse message was met
-    bool empty;
-
-    /// Number of CommandComplete messages received. Mostly used
-    /// in simple query workflow, since extended protocol uses only
-    /// ReadyForQuery.
+    /// Number of CommandComplete or EmptyQueryResponse messages received.
     short commandsComplete;
 
-    /// Data blocks, each block being an array of rows sharing one row description (schema).
+    /// Data blocks, each block being an array of rows sharing one row
+    /// description (schema). Each sql statement in simple query protocol
+    /// creates one block. Each portal execution in EQ protocol creates
+    /// one block.
     RowBlock[] blocks;
 }
 
@@ -283,6 +281,7 @@ struct QueryResult
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;
+    bool newBlockAwaited = true;
 
     bool interceptor(Message msg, ref bool err, ref string errMsg)
     {
@@ -290,19 +289,44 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
         switch (msg.type)
         {
             case EmptyQueryResponse:
-                res.empty = true;
+                if (newBlockAwaited)
+                {
+                    RowBlock rb;
+                    rb.empty = true;
+                    res.blocks ~= rb;
+                }
+                res.commandsComplete++;
+                newBlockAwaited = true;
                 break;
             case CommandComplete:
+                if (newBlockAwaited)
+                    res.blocks ~= RowBlock();
                 res.commandsComplete++;
+                newBlockAwaited = true;
+                break;
+            case PortalSuspended:
+                err = true;
+                errMsg = "Dpeq cannot handle suspended portals, " ~
+                    "do not limit row count in Execute message.";
                 break;
             case RowDescription:
                 // RowDescription always starts new row block
-                RowBlock rb;
-                rb.rowDesc = dpeq.schema.RowDescription(msg.data);
-                res.blocks ~= rb;
+                if (newBlockAwaited)
+                {
+                    RowBlock rb;
+                    rb.rowDesc = dpeq.schema.RowDescription(msg.data);
+                    res.blocks ~= rb;
+                    newBlockAwaited = false;
+                }
+                else
+                {
+                    err = true;
+                    errMsg = "Unexpected RowDescription not in the start of " ~
+                        "row block";
+                }
                 break;
             case DataRow:
-                if (res.blocks.length == 0)
+                if (newBlockAwaited)
                 {
                     if (requireRowDescription)
                     {
@@ -310,6 +334,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                         errMsg ~= "Got row without row description ";
                     }
                     res.blocks ~= RowBlock();
+                    newBlockAwaited = false;
                 }
                 res.blocks[$-1].dataRows ~= msg; // we simply save raw bytes
                 break;

@@ -152,10 +152,15 @@ struct RowDescription
 
 
 /// Array of rows, returned by the server, wich all share one row
-/// description. Simple queries may include multiple SELECTs, wich will return
-/// multiple blocks of rows.
+/// description. Simple queries may include multiple SQL statements, wich will return
+/// multiple blocks of rows. In extended query protocol flow, each row block will
+/// correspond to results of one "Execute" message.
 struct RowBlock
 {
     RowDescription rowDesc;
     Message[] dataRows;
+
+    /// set when the server responded with EmptyQueryResponse to sql query
+    /// this row block answers to.
+    bool empty;
 }
