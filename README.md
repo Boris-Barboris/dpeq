@@ -12,9 +12,10 @@ binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
 help you to understand the nature of the messages being passed:
-https://www.postgresql.org/docs/9.5/static/protocol.html
-https://www.postgresql.org/docs/9.5/static/protocol-flow.html
-https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
+https://www.postgresql.org/docs/9.5/static/protocol.html   
+https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
+https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
+https://www.pgcon.org/2014/schedule/attachments/330_postgres-for-the-wire.pdf   
 
 Many thanks to authors of https://github.com/pszturmaj/ddb and
 https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
@@ -212,8 +213,11 @@ void createTestSchema(ConT)(ConT con)
     Polling stops when ReadyForQuery message is recieved, or the socket throws.
     ErroResponse message, if met, causes this call to throw.
 
-    QueryResult is a blob of unmarshalled messages. Usually, it contains
-    contents of RowDescription message and arrays of actual data rows.
+    QueryResult is an array of row blocks, each block representing the server
+    response to one SQL statement. For simple queries, there will be as many
+    row blocks as there were SQL statements. For EQ message sequences, each
+    row block corresponds to one Execute message (repsesented by Portal.execute
+    in dpeq).
 
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by
     getQueryResults call. Generally, you should be very careful with
@@ -393,16 +397,20 @@ void main()
     transaction block ("close" meaning to commit if no error, or roll back
     if error). Then a ReadyForQuery response is issued. The purpose of Sync is
     to provide a resynchronization point for error recovery. When an error is
-     detected while processing any extended-query message, the backend issues
-     ErrorResponse, then reads and discards messages until a Sync is reached,
-     then issues ReadyForQuery and returns to normal message processing. (But
-     note that no skipping occurs if an error is detected while processing Sync
-     — this ensures that there is one and only one ReadyForQuery sent for
-     each Sync.)"
+    detected while processing any extended-query message, the backend issues
+    ErrorResponse, then reads and discards messages until a Sync is reached,
+    then issues ReadyForQuery and returns to normal message processing. (But
+    note that no skipping occurs if an error is detected while processing Sync
+    — this ensures that there is one and only one ReadyForQuery sent for
+    each Sync.)"
 
-     TLDR: call sync() before each getQueryResults, IF you are using EQ. Sync
-     will produce duplicated ReadyForQuery message when used together with
-     Simple Query protocol message, breaking your next getQueryResults.
+    TLDR: call sync() before each getQueryResults, IF you are using EQ. Sync
+    will produce duplicated ReadyForQuery message when used together with
+    Simple Query protocol message, breaking your next getQueryResults.
+
+    Note, that EQ Execute messages (e.g. portal executions) wich are not
+    divided by Sync messages, run in one transaction and either all succeed,
+    or all fail.
     */
     con.sync();
 
@@ -498,7 +506,7 @@ void main()
         col12 = 266f36a2-acac-4eb0-8cc3-24907b886f6e
         col13 = 36771050-164b-4493-9372-860bbef83ef8
         col14 = 3.14
-        col15 = nan
+        col15 = inf
         col16 = -3.14
         col17 = Nullable.null
         col18 = 192.168.0.1
@@ -537,7 +545,7 @@ void main()
         std.uuid.UUID 266f36a2-acac-4eb0-8cc3-24907b886f6e
         std.uuid.UUID 36771050-164b-4493-9372-860bbef83ef8
         float 3.14
-        float nan
+        float inf
         double -3.14
         void null
         immutable(char)[] 192.168.0.1
