@@ -2,16 +2,16 @@
 
 [![Build Status](https://travis-ci.org/Boris-Barboris/dpeq.svg?branch=master)](https://travis-ci.org/Boris-Barboris/dpeq)
 
-**dpeq** is a source library that implements client side of PostgreSQL
-extended query (EQ) protocol. EQ is a stateful message-based binary protocol
-working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
+**dpeq** is a source library that implements a subset of the client side of 
+PostgreSQL extended query (EQ) protocol. EQ is a stateful message-based binary 
+protocol working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
 to hold the required state and utility functions, that send and recieve protocol
 messages in sensible manner. On top of that, dpeq includes extensible
 schema-oriented marshalling functionality, wich maps PSQL types to their
 binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
-help you to understand the nature of the messages being passed:
+help you to understand the nature of the messages being passed:   
 https://www.postgresql.org/docs/9.5/static/protocol.html   
 https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
 https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
