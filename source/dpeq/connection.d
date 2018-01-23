@@ -540,7 +540,7 @@ class PSQLConnection(
         if (error)
             throw new PsqlErrorResponseException(eMsg);
         if (intError)
-            throw new PsqlErrorResponseException(intErrMsg);
+            throw new PsqlClientException(intErrMsg);
     }
 
     /// read messages from socket until all expected ReadyForQuery are received
