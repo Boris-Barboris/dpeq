@@ -409,8 +409,8 @@ void main()
     Simple Query protocol message, breaking your next getQueryResults.
 
     Note, that EQ Execute messages (e.g. portal executions) wich are not
-    divided by Sync messages, run in one transaction and either all succeed,
-    or all fail.
+    divided by Sync messages, run in one transaction, wich is committed or
+    rolled back in presence of errors when the backend receives Sync message.
     */
     con.sync();
 
