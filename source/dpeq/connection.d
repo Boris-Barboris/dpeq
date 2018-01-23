@@ -252,7 +252,10 @@ class PSQLConnection(
     * `parameters` is input range of marshalling delegates.
     *
     * 'parameters' - input range of marshaller closures. Actual data should
-    * be self-contained in this parameter.
+    * be self-contained in this parameter. Marshaller is a callable that
+    * is covariant with "int delegate(ubyte[] buf)" and returns -2 if buf
+    * is too small, -1 if parameter is null and an actual number of bytes written
+    * otherwise.
     *
     * 'resultFormatCodes' - input range of query result FormatCodes.
     * quotes:
@@ -543,7 +546,8 @@ class PSQLConnection(
             throw new PsqlClientException(intErrMsg);
     }
 
-    /// read messages from socket until all expected ReadyForQuery are received
+    /// reads and discards messages from socket until all expected
+    /// ReadyForQuery messages are received
     void windupResponseStack()
     {
         while (readyForQueryExpected > 0)
