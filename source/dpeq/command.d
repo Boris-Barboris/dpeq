@@ -274,10 +274,22 @@ struct QueryResult
     /// creates one block. Each portal execution in EQ protocol creates
     /// one block.
     RowBlock[] blocks;
+
+    /// returns true if there is not a single data row in the response.
+    @property bool noDataRows() const
+    {
+        foreach (block; blocks)
+            if (block.dataRows.length > 0)
+                return false;
+        return true;
+    }
 }
 
 
 /// Generic method, suitable for both simple and prepared queries.
+/// Polls messages from connection object and builds QueryResult structure from
+/// the messages. Throws if something goes wrong. Polling stops after
+/// ReadyForQuery message from the backend.
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;
@@ -292,7 +304,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 if (newBlockAwaited)
                 {
                     RowBlock rb;
-                    rb.empty = true;
+                    rb.emptyQuery = true;
                     res.blocks ~= rb;
                 }
                 res.commandsComplete++;

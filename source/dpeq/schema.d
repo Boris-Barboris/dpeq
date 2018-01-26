@@ -162,5 +162,5 @@ struct RowBlock
 
     /// set when the server responded with EmptyQueryResponse to sql query
     /// this row block answers to.
-    bool empty;
+    bool emptyQuery;
 }
