@@ -5,7 +5,7 @@
 **dpeq** is a source library that implements a subset of the client side of 
 PostgreSQL extended query (EQ) protocol. EQ is a stateful message-based binary 
 protocol working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
-to hold the required state and utility functions, that send and recieve protocol
+to hold the required state and utility functions, that send and receive protocol
 messages in sensible manner. On top of that, dpeq includes extensible
 schema-oriented marshalling functionality, wich maps PSQL types to their
 binary or text representations, native to D.
@@ -22,7 +22,7 @@ https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
 
 ## Source structure
 * source/dpeq/connection.d - buffered message streamer *PSQLConnection* is used
-  to send and recieve messages. It's a class template with customazable socket
+  to send and receive messages. It's a class template with customazable socket
   type (so you can easily use it with vibe-d) and logging functions.
 * source/dpeq/schema.d - structures that describe query results.
 * source/dpeq/command.d - classes and functions that implement typical operations
@@ -210,7 +210,7 @@ void createTestSchema(ConT)(ConT con)
     /*
     getQueryResult calls PSQLConnection.pollMessages wich repeatedly reads
     messages from the socket and fills QueryResult structure with the raw data.
-    Polling stops when ReadyForQuery message is recieved, or the socket throws.
+    Polling stops when ReadyForQuery message is received, or the socket throws.
     ErroResponse message, if met, causes this call to throw.
 
     QueryResult is an array of row blocks, each block representing the server
@@ -488,7 +488,7 @@ void main()
         {
             writeln(rowDesc[i].name, " = ", row[i]);
         }
-        assert(row == sentTuple, "Sent and recieved tuples don't match");
+        assert(row == sentTuple, "Sent and received tuples don't match");
         /* prints:
         row received, it's tuple representation:
         col0 = false
