@@ -181,7 +181,8 @@ class Portal(ConnT)
             portalName = "";
     }
 
-    /// bind empty, parameterless portal
+    /// bind empty, parameterless portal. resCodes are format codes of resulting
+    /// columns.
     final void bind(FormatCode[] resCodes = null)
     {
         assert(prepStmt.paramCount == 0);
@@ -635,7 +636,7 @@ class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
 
 /// Returns RandomAccessRange of lazy-demarshalled tuples.
 /// Customazable with Demarshaller template.
-/// This version does not require RowDescription, but cannot validate row that good.
+/// This version does not require RowDescription, but cannot validate rows that good.
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (Message[] data)

@@ -20,9 +20,9 @@ import core.thread;
 import core.time;
 
 
-// test spec of a table row, wich includes the specializations of a
-// StaticFieldMarshaller, as well as a couple of types wich are supposed to
-// fallback to PromiscuousStringMarshaller
+/// test spec of a table row, wich includes the specializations of a
+/// StaticFieldMarshaller, as well as a couple of types wich are supposed to
+/// fallback to PromiscuousStringMarshaller
 enum FieldSpec[] testTableSpec = [
     FieldSpec(PgType.BOOLEAN, false),
     FieldSpec(PgType.BOOLEAN, true),
@@ -230,7 +230,7 @@ void transactionExample()
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind();
+            pt.bind(testTableRowFormats);
             pt.execute(false);
             con.sync();
             con.flush();
@@ -248,13 +248,13 @@ void transactionExample()
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind();
+            pt.bind(testTableRowFormats);
             pt.execute(false);
             con.sync();     // releases row lock of thread 2
             con.flush();
         }
 
-        // this returns approx after 2 seconds, after first thread commits
+        // this returns approx after 2 seconds, right after first thread commits
         // and releases row locks
         res = getQueryResults(con);
         rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
