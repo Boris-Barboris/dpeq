@@ -153,6 +153,10 @@ void main()
         foreach (col; row)
             writeln(col.type, " ", col.toString);
     }
+
+
+    // other tests:
+    transactionExample();
 }
 
 void createTestSchema(ConT)(ConT con)
@@ -163,7 +167,7 @@ void createTestSchema(ConT)(ConT con)
 }
 
 
-// example wich demonstrates transactions
+// example wich demonstrates implicit transaction scope of EQ prtocol
 void transactionExample()
 {
     void threadFunc1()
@@ -197,12 +201,13 @@ void transactionExample()
             auto pt = scoped!(Portal!ConT)(ps, false);
             pt.bind();
             pt.execute(false);
-            // this effectively commits and drops the lock on table row
+            // this Sync effectively commits and drops the lock on table row
             con.sync();
         }
         getQueryResults(con);
         con.terminate();
     }
+
 
     void threadFunc2()
     {
@@ -210,6 +215,24 @@ void transactionExample()
         auto con = new ConT(
             BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
             "r00tme", "dpeqtestdb"));
+
+        // simple select to ensure old false value
+        {
+            // unnamed prepared statement
+            auto ps = scoped!(PreparedStatement!ConT)(con,
+                "SELECT * FROM dpeq_test;", cast(short) 0);
+            ps.parse();
+            // unnamed portal
+            auto pt = scoped!(Portal!ConT)(ps, false);
+            pt.bind();
+            pt.execute(false);
+            con.sync();
+        }
+
+        auto res = getQueryResults(con);
+        auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+        assert(rows.front[0] == false, "Unexpected 'true' in first column");
+
         // parse and bind and execute for SELECT FOR UPDATE
         {
             // unnamed prepared statement
@@ -225,9 +248,8 @@ void transactionExample()
 
         // this returns approx after 2 seconds, after first thread commits
         // and releases row locks
-        auto res = getQueryResults(con);
-
-        auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+        res = getQueryResults(con);
+        rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
         assert(rows.front[0] == true,
             "First thread's commit is not visible in second thread");
         con.terminate();
