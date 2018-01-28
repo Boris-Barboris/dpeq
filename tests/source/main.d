@@ -154,6 +154,9 @@ void main()
             writeln(col.type, " ", col.toString);
     }
 
+    // close connection
+    con.terminate();
+
 
     // other tests:
     transactionExample();
@@ -167,7 +170,8 @@ void createTestSchema(ConT)(ConT con)
 }
 
 
-// example wich demonstrates implicit transaction scope of EQ prtocol
+
+/// example wich demonstrates implicit transaction scope of EQ prtocol
 void transactionExample()
 {
     void threadFunc1()
@@ -189,6 +193,7 @@ void transactionExample()
             // backend will not return result of this select until we request it
             // via Flush message
             con.putFlushMessage();
+            con.flush();
         }
         Thread.sleep(seconds(2));   // sleep in order to demonstrate row locking
         // we now update all (there is only one) row
@@ -203,6 +208,7 @@ void transactionExample()
             pt.execute(false);
             // this Sync effectively commits and drops the lock on table row
             con.sync();
+            con.flush();
         }
         getQueryResults(con);
         con.terminate();
@@ -227,6 +233,7 @@ void transactionExample()
             pt.bind();
             pt.execute(false);
             con.sync();
+            con.flush();
         }
 
         auto res = getQueryResults(con);
@@ -244,6 +251,7 @@ void transactionExample()
             pt.bind();
             pt.execute(false);
             con.sync();     // releases row lock of thread 2
+            con.flush();
         }
 
         // this returns approx after 2 seconds, after first thread commits
