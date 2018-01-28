@@ -221,8 +221,7 @@ void createTestSchema(ConT)(ConT con)
 
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by
     getQueryResults call. Generally, you should be very careful with
-    ReadyForQuery messages. Also, take a look at PSQLConnection.delayedPoll
-    method.
+    ReadyForQuery messages.
     */
     con.getQueryResults();
 }
@@ -364,7 +363,7 @@ void main()
     portal.bind!(testTableSpec, testTableRowFormats)(sentTuple.expand);
 
     /*
-    Portal.execute puts the Execute message into the write buffer. On recieving,
+    Portal.execute puts the Execute message into the write buffer. On receiving,
     PSQL fires the query plan and starts pushing results to it's
     end of the socket.
 

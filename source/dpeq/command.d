@@ -58,11 +58,18 @@ class PreparedStatement(ConnT)
         short m_paramCount;
     }
 
+    /// name of this prepared statement, as seen by backend.
     @property string preparedName() const { return parsedName; }
 
     @property short paramCount() const { return m_paramCount; }
 
     /**
+    Creates prepared statement object, wich holds dpeq utility state.
+    Constructor does not write anything to connection write buffer.
+
+    persist flag is true when you want named prepared statement. Name will
+    be automatically generated.
+
     Quoting https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html:
 
     The number of parameter data types specified (can be zero). Note that this is not an
@@ -77,7 +84,8 @@ class PreparedStatement(ConnT)
 
     That means you can leave paramTypes null.
     */
-    this(ConnT conn, string query, short paramCount, const(ObjectID)[] paramTypes = null, bool persist = true)
+    this(ConnT conn, string query, short paramCount,
+        const(ObjectID)[] paramTypes = null, bool persist = true)
     {
         assert(conn);
         assert(query);
@@ -92,9 +100,23 @@ class PreparedStatement(ConnT)
             parsedName = "";
     }
 
+    /// Simplified constructor for unnamed prepared statement with no
+    /// parameter types specified.
+    this(ConnT conn, string query, short paramCount)
+    {
+        assert(conn);
+        assert(query);
+        assert(paramCount >= 0);
+        this.conn = conn;
+        this.query = query;
+        this.paramTypes = null;
+        this.m_paramCount = paramCount;
+        parsedName = "";
+    }
+
     /// you're not supposed to reparse persistent Prepared statement (it will break
     /// existing portals), create a new one.
-    void postParseMessage()
+    final void postParseMessage()
     {
         conn.putParseMessage(parsedName, query, paramTypes[]);
         parseRequested = true;
@@ -103,7 +125,7 @@ class PreparedStatement(ConnT)
     alias parse = postParseMessage;
 
     /// explicit close for persistent prepared statements
-    void postCloseMessage()
+    final void postCloseMessage()
     {
         assert(parseRequested);
         assert(parsedName.length, "no need to close unnamed prepared statements");
@@ -115,7 +137,7 @@ class PreparedStatement(ConnT)
     }
 
     /// poll message queue and make sure parse was completed
-    void ensureParseComplete()
+    final void ensureParseComplete()
     {
         bool parsed = false;
         bool interceptor(Message msg, ref bool err, ref string errMsg)
@@ -159,7 +181,22 @@ class Portal(ConnT)
             portalName = "";
     }
 
-    void bind(
+    /// bind empty, parameterless portal
+    final void bind(FormatCode[] resCodes = null)
+    {
+        assert(prepStmt.paramCount == 0);
+
+        auto safePoint = conn.saveBuffer();
+        scope (failure) safePoint.restore();
+
+        if (bindRequested && portalName.length)
+            postCloseMessage();
+
+        conn.putBindMessage(portalName, prepStmt.parsedName, resCodes);
+        bindRequested = true;
+    }
+
+    final void bind(
             FieldSpec[] specs,
             FormatCode[] resCodes,
             alias Marshaller = DefaultFieldMarshaller,
@@ -193,7 +230,7 @@ class Portal(ConnT)
 
     /// Generic InputRanges of types and field marshallers, to pass them
     /// directly to putBindMessage. No validation performed.
-    void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
+    final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
         scope RR returnCodeRange)
     {
         auto safePoint = conn.saveBuffer();
@@ -206,7 +243,7 @@ class Portal(ConnT)
     }
 
     /// explicit close for persistent prepared statements
-    void postCloseMessage()
+    final void postCloseMessage()
     {
         assert(bindRequested);
         assert(portalName.length, "no need to close unnamed portals");
@@ -224,7 +261,7 @@ class Portal(ConnT)
     }
 
     /// poll message queue and make sure bind was completed
-    void ensureBindComplete()
+    final void ensureBindComplete()
     {
         bool is_bound = false;
         bool interceptor(Message msg, ref bool err, ref string errMsg)
@@ -247,7 +284,7 @@ class Portal(ConnT)
     /** Send Describe+Execute command.
     If describe is false, no RowDescription message will be requested
     from PSQL - useful for optimistic statically-typed querying. */
-    void execute(bool describe = true)
+    final void execute(bool describe = true)
     {
         assert(bindRequested);
         if (describe)
@@ -295,7 +332,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
     QueryResult res;
     bool newBlockAwaited = true;
 
-    bool interceptor(Message msg, ref bool err, ref string errMsg)
+    bool interceptor(Message msg, ref bool err, ref string errMsg) nothrow
     {
         with (BackendMessageType)
         switch (msg.type)

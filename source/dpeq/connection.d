@@ -117,11 +117,11 @@ class PSQLConnection(
     /// Number of ReadyForQuery messages that are yet to be recieved
     /// from the database. May be useful for checking wether getQueryResults
     /// would block forever.
-    @property int expectedRFQCount() const { return readyForQueryExpected; }
+    final @property int expectedRFQCount() const { return readyForQueryExpected; }
 
     /// Transaction status, reported by the last received ReadyForQuery message.
     /// For a new connection TransactionStatus.IDLE is returned.
-    @property TransactionStatus transactionStatus() const { return tstatus; }
+    final @property TransactionStatus transactionStatus() const { return tstatus; }
 
     invariant
     {
@@ -131,14 +131,14 @@ class PSQLConnection(
 
     /// Connection is open when it is authorized and socket was alive last time
     /// it was checked.
-    @property bool isOpen() { return open; }
+    final @property bool isOpen() { return open; }
 
-    string getNewPreparedName()
+    final string getNewPreparedName()
     {
         return (preparedCounter++).to!string;
     }
 
-    string getNewPortalName()
+    final string getNewPortalName()
     {
         return (portalCounter++).to!string;
     }
@@ -180,7 +180,7 @@ class PSQLConnection(
     }
 
     /// flush writeBuffer into the socket. This one blocks/yields.
-    void flush()
+    final void flush()
     {
         try
         {
@@ -203,7 +203,7 @@ class PSQLConnection(
     }
 
     /// discard write buffer content
-    void discard()
+    final void discard()
     {
         bufHead = 0;
     }
@@ -211,7 +211,7 @@ class PSQLConnection(
     /// Save write buffer cursor in order to be able to restore it in case of errors.
     /// Use it to prevent sending junk to backend when something goes wrong during
     /// marshalling or message creation.
-    auto saveBuffer()
+    final auto saveBuffer()
     {
         static struct WriteCursor
         {
@@ -226,7 +226,7 @@ class PSQLConnection(
     }
 
     pragma(inline)
-    void ensureOpen()
+    final void ensureOpen()
     {
         enforce!PsqlConnectionClosedException(open, "Connection is not open");
     }
@@ -269,7 +269,7 @@ class PSQLConnection(
     * The result-column format codes. Each must presently be zero (text) or
     * one (binary).
     */
-    void putBindMessage(FR, PR, RR)
+    final void putBindMessage(FR, PR, RR)
         (string portal, string prepared, scope FR formatCodes, scope PR parameters,
         scope RR resultFormatCodes)
     //if (isInputRange!FR && is(Unqual!(ElementType!FR) == FormatCode) &&
@@ -321,10 +321,45 @@ class PSQLConnection(
         logDebug("Bind message buffered");
     }
 
+    /// putBindMessage overload for parameterless portals
+    final void putBindMessage(RR)
+        (string portal, string prepared, scope RR resultFormatCodes)
+    {
+        ensureOpen();
+        write(cast(ubyte)FrontMessageType.Bind);
+        auto lenTotal = reserveLen();
+        cwrite(portal);
+        cwrite(prepared);
+
+        // parameter format code(s)
+        short fcodes = 0;
+        auto fcodePrefix = reserveLen!short();
+        fcodePrefix.write(fcodes);
+
+        // parameters
+        short pcount = 0;
+        auto pcountPrefix = reserveLen!short();
+        pcountPrefix.write(pcount);
+
+        // result format codes
+        short rcount = 0;
+        auto rcolPrefix = reserveLen!short();
+        foreach (FormatCode fcode; resultFormatCodes)
+        {
+            write(cast(short)fcode);
+            logDebug("Bind: writing %d rfcode", fcode);
+            rcount++;
+        }
+        rcolPrefix.write(rcount);
+
+        lenTotal.fill();
+        logDebug("Bind message buffered");
+    }
+
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    void putCloseMessage(char closeWhat, string name)
+    final void putCloseMessage(char closeWhat, string name)
     {
         ensureOpen();
         assert(closeWhat == 'S' || closeWhat == 'P');
@@ -339,7 +374,7 @@ class PSQLConnection(
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    void putDescribeMessage(char descWhat, string name)
+    final void putDescribeMessage(char descWhat, string name)
     {
         ensureOpen();
         assert(descWhat == 'S' || descWhat == 'P');
@@ -354,7 +389,7 @@ class PSQLConnection(
     /**
     non-zero maxRows will generate PortalSuspended messages, wich are
     currently not handled by dpeq commands */
-    void putExecuteMessage(string portal = "", int maxRows = 0)
+    final void putExecuteMessage(string portal = "", int maxRows = 0)
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Execute);
@@ -374,7 +409,7 @@ class PSQLConnection(
     commands. Without Flush, messages returned by the backend will be combined
     into the minimum possible number of packets to minimize network overhead."
     */
-    void putFlushMessage()
+    final void putFlushMessage()
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Flush);
@@ -382,7 +417,7 @@ class PSQLConnection(
         logDebug("Flush message buffered");
     }
 
-    void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
+    final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
     //  if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID) &&
     {
         logDebug("Message to parse query: %s", query);
@@ -408,7 +443,7 @@ class PSQLConnection(
     }
 
     /// put Query message (simple query protocol)
-    void putQueryMessage(string query)
+    final void putQueryMessage(string query)
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Query);
@@ -425,7 +460,7 @@ class PSQLConnection(
     Put Sync message into write buffer. Usually you should call this after
     every portal execute message.
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
-    void putSyncMessage()
+    final void putSyncMessage()
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Sync);
@@ -436,46 +471,25 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
-    /// When this callback returns true, pollMessages will exit it's loop
-    /// (or one of it's loops in case of delayed pollers).
-    alias InterceptorT = bool delegate(Message, ref bool, ref string);
-
-    protected
-    {
-        struct DelayedPoller
-        {
-            InterceptorT interceptor;
-            bool finishOnError;
-        }
-        DelayedPoller[] delayedPollers;
-    }
-
-    /// Register callbacks wich will be executed in FIFO order next time
-    /// someone calls pollMessages.
-    void delayedPoll(InterceptorT interceptor, bool finishOnError = false)
-    {
-        delayedPollers ~= DelayedPoller(interceptor, finishOnError);
-    }
+    /** When this callback returns true, pollMessages will exit it's loop.
+    Interceptor should set err to true if it has encountered some kind of error
+    and wants it to be rethrown as PsqlClientException at the end of
+    pollMessages call. errMsg should be appended with error description. */
+    alias InterceptorT = bool delegate(Message msg, ref bool err,
+        ref string errMsg) nothrow;
 
     /** this function reads messages from the socket in loop until:
     *     1). if finishOnError is set and ErrorResponse is received, function
     *         throws immediately.
     *     2). if ReadyForQuery message is received.
-    *     3). interceptor delegate provided returned `true`.
+    *     3). interceptor delegate returnes `true`.
     *   Interceptor delegate is used to customize the logic. If the message is
     *   not ReadyForQuery or ErrorResponse, it is passed to interceptor. It may
-    *   set bool flag to true and edit string error message, if delayed throw
+    *   set bool flag to true and append to error message string, if delayed throw
     *   is required.
     */
-    void pollMessages(scope InterceptorT interceptor, bool finishOnError = false)
+    final void pollMessages(scope InterceptorT interceptor, bool finishOnError = false)
     {
-        int intIdx = -1;
-        if (delayedPollers.length > 0)
-            intIdx = 0;
-
-        bool aFinOnError;
-        InterceptorT ic;
-
         bool finish = false;
         bool error = false;
         string eMsg;
@@ -485,9 +499,6 @@ class PSQLConnection(
         while (!finish)
         {
             Message msg = readOneMessage();
-            aFinOnError = intIdx == -1 ? finishOnError :
-                delayedPollers[intIdx].finishOnError;
-            ic = intIdx == -1 ? interceptor : delayedPollers[intIdx].interceptor;
 
             with (BackendMessageType)
             switch (msg.type)
@@ -496,7 +507,7 @@ class PSQLConnection(
                     error = true;
                     eMsg.reserve(256);
                     handleErrorMessage(msg.data, eMsg);
-                    if (aFinOnError)
+                    if (finishOnError)
                         finish = true;
                     break;
                 case ReadyForQuery:
@@ -511,32 +522,8 @@ class PSQLConnection(
                         logDebug(demarshalString(msg.data[1..$], msg.data.length - 2));
                     continue;
                 default:
-                    if (ic)
-                        finish |= ic(msg, intError, intErrMsg);
-            }
-
-            // pass our loop to next interceptors, but abort if
-            // error was encountered
-            if (finish && intIdx >= 0)
-            {
-                intIdx++;
-                if (intIdx >= delayedPollers.length)
-                    intIdx = -1;
-                finish = false;
-            }
-        }
-
-        // clean up buffer of delayed interceptors
-        if (delayedPollers.length > 0)
-        {
-            if (intIdx == -1)
-                delayedPollers.length = 0;
-            else
-            {
-                assert(intIdx < delayedPollers.length);
-                for (int i = 0; i < delayedPollers.length - intIdx; i++)
-                    delayedPollers[i] = delayedPollers[i + intIdx];
-                delayedPollers.length = delayedPollers.length - intIdx;
+                    if (interceptor !is null)
+                        finish |= interceptor(msg, intError, intErrMsg);
             }
         }
 
@@ -562,7 +549,7 @@ class PSQLConnection(
     // client code directly. If you need them, inherit them.
 protected:
 
-    void putStartupMessage(in BackendParams params)
+    final void putStartupMessage(in BackendParams params)
     {
         auto lenPrefix = reserveLen();
         write(0x0003_0000);  // protocol v3
@@ -575,14 +562,14 @@ protected:
         logDebug("Startup message buffered");
     }
 
-    void putTerminateMessage()
+    final void putTerminateMessage()
     {
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
         logDebug("Terminate message buffered");
     }
 
-    void initialize(in BackendParams params)
+    final void initialize(in BackendParams params)
     {
         putStartupMessage(params);
         flush();
@@ -594,8 +581,12 @@ protected:
                 if (msg.type == BackendMessageType.Authentication)
                 {
                     auth_msg = msg;
-                    enforce!PsqlClientException(authType == -1,
-                        "Unexpected second Authentication message from backend");
+                    if (authType != -1)
+                    {
+                        e = true;
+                        eMsg ~= "Unexpected second Authentication " ~
+                            "message from backend";
+                    }
                     authType = demarshalNumber(msg.data[0..4]);
                     if (authType == 0)  // instantly authorized, so we'll get readyForQuery
                         readyForQueryExpected++;
@@ -638,7 +629,7 @@ protected:
         enforce!PsqlClientException(authRes == 0, "No AuthenticationOk message");
     }
 
-    void putPasswordMessage(string pw)
+    final void putPasswordMessage(string pw)
     {
         write(cast(ubyte)FrontMessageType.PasswordMessage);
         auto lenPrefix = reserveLen();
@@ -648,9 +639,9 @@ protected:
         logDebug("Password message buffered");
     }
 
-    void putMd5PasswordMessage(string pw, string user, ubyte[4] salt)
+    final void putMd5PasswordMessage(string pw, string user, ubyte[4] salt)
     {
-        // ty hb-ddb
+        // thank you hb-ddb authors
         char[32] MD5toHex(T...)(in T data)
         {
             import std.ascii : LetterCase;
@@ -669,7 +660,7 @@ protected:
         logDebug("MD5 Password message buffered");
     }
 
-    void handleErrorMessage(ubyte[] data, ref string msg)
+    final void handleErrorMessage(ubyte[] data, ref string msg)
     {
         void copyTillZero()
         {
@@ -724,7 +715,7 @@ protected:
 
     /// Read from socket to buffer buf exactly buf.length bytes.
     /// Blocks and throws.
-    void read(ubyte[] buf)
+    final void read(ubyte[] buf)
     {
         try
         {
@@ -742,7 +733,7 @@ protected:
     }
 
     /// extends writeBuffer if marshalling functor m is lacking space (returns -2)
-    int wrappedMarsh(MarshT)(scope MarshT m)
+    final int wrappedMarsh(MarshT)(scope MarshT m)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
         while (bcount == -2)
@@ -756,7 +747,7 @@ protected:
     }
 
     /// write numeric type T to write buffer
-    int write(T)(T val)
+    final int write(T)(T val)
         if (isNumeric!T)
     {
         return wrappedMarsh((ubyte[] buf) => marshalFixedField(buf, val));
@@ -764,7 +755,7 @@ protected:
 
     /// Reserve space in write buffer for length prefix and return
     /// struct that automatically fills it from current buffer offset position.
-    auto reserveLen(T = int)()
+    final auto reserveLen(T = int)()
         if (isNumeric!T && !isUnsigned!T)
     {
         static struct Len
@@ -801,18 +792,18 @@ protected:
         return l;
     }
 
-    int write(string s)
+    final int write(string s)
     {
         return wrappedMarsh((ubyte[] buf) => marshalStringField(buf, s));
     }
 
-    int cwrite(string s)
+    final int cwrite(string s)
     {
         return wrappedMarsh((ubyte[] buf) => marshalCstring(buf, s));
     }
 
     /// read exactly one message from the socket
-    Message readOneMessage()
+    final Message readOneMessage()
     {
         Message res;
         ubyte[1] type;
