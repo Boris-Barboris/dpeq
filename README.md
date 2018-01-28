@@ -552,3 +552,109 @@ void main()
         */
     }
 ```
+### Implicit transaction scope
+```D
+/// example wich demonstrates implicit transaction scope of EQ prtocol
+void transactionExample()
+{
+    /// this function will run in thread1, using it's own connection
+    void threadFunc1()
+    {
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+        // parse and bind and execute for SELECT FOR UPDATE
+        {
+            // unnamed prepared statement
+            auto ps = scoped!(PreparedStatement!ConT)(con,
+                "SELECT * FROM dpeq_test FOR UPDATE;", cast(short) 0);
+            ps.parse();
+            // unnamed portal
+            auto pt = scoped!(Portal!ConT)(ps, false);
+            pt.bind();
+            pt.execute(false);
+            // since we don't send sync (wich would close the implicit transaction),
+            // backend will not return result of this select until we request it
+            // via Flush message
+            con.putFlushMessage();
+            con.flush();
+            // at this point backend will aquire row-level locks on dpeq_test
+            // table that will be released after we send Sync or close the
+            // connection
+        }
+        Thread.sleep(seconds(2));   // sleep in order to demonstrate row locking
+        // we now update all (there is only one) rows
+        {
+            // unnamed prepared statement, wich sets first column value to 'true'
+            auto ps = scoped!(PreparedStatement!ConT)(con,
+                "UPDATE dpeq_test SET col0 = 't';", cast(short) 0);
+            ps.parse();
+            // unnamed portal
+            auto pt = scoped!(Portal!ConT)(ps, false);
+            pt.bind();
+            pt.execute(false);
+            // this Sync effectively commits and drops the lock on all rows
+            con.sync();
+            con.flush();
+        }
+        getQueryResults(con);
+        con.terminate();
+    }
+
+
+    // this is the second thread
+    void threadFunc2()
+    {
+        Thread.sleep(msecs(500));   // let the first thread aquire lock
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+
+        // simple select to ensure old value, wich should be 'false'
+        {
+            // unnamed prepared statement
+            auto ps = scoped!(PreparedStatement!ConT)(con,
+                "SELECT * FROM dpeq_test;", cast(short) 0);
+            ps.parse();
+            // unnamed portal
+            auto pt = scoped!(Portal!ConT)(ps, false);
+            pt.bind(testTableRowFormats);
+            pt.execute(false);
+            con.sync();
+            con.flush();
+        }
+
+        auto res = getQueryResults(con);
+        auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+        assert(rows.front[0] == false, "Unexpected 'true' in first column");
+
+        // parse and bind and execute for SELECT FOR UPDATE
+        {
+            // unnamed prepared statement
+            auto ps = scoped!(PreparedStatement!ConT)(con,
+                "SELECT * FROM dpeq_test FOR UPDATE;", cast(short) 0);
+            ps.parse();
+            // unnamed portal
+            auto pt = scoped!(Portal!ConT)(ps, false);
+            pt.bind(testTableRowFormats);
+            pt.execute(false);
+            con.sync();     // instantly releases row lock of thread 2
+            con.flush();
+        }
+
+        // this getQueryResults blocks for approximately 2 seconds, right until
+        // the first thread commits and releases row-level locks
+        res = getQueryResults(con);
+        rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
+        assert(rows.front[0] == true,
+            "First thread's commit is not visible in second thread");
+        con.terminate();
+    }
+
+    auto thread1 = new Thread(&threadFunc1).start();
+    auto thread2 = new Thread(&threadFunc2).start();
+
+    thread1.join();
+    thread2.join();
+}
+```
