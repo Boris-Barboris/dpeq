@@ -665,7 +665,7 @@ auto blockToTuples
         ResTuple res;
         int len = 0;
         const(ubyte)[] vbuf;
-        from = from[2 .. $];    // skip 16 bytes
+        from = from[2 .. $];    // skip 16 bits
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
             len = demarshalNumber(from[0 .. 4]);
