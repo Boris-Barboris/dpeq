@@ -59,9 +59,9 @@ class PreparedStatement(ConnT)
     }
 
     /// name of this prepared statement, as seen by backend.
-    @property string preparedName() const { return parsedName; }
+    final @property string preparedName() const { return parsedName; }
 
-    @property short paramCount() const { return m_paramCount; }
+    final @property short paramCount() const { return m_paramCount; }
 
     /**
     Creates prepared statement object, wich holds dpeq utility state.
@@ -115,7 +115,8 @@ class PreparedStatement(ConnT)
     }
 
     /// you're not supposed to reparse persistent Prepared statement (it will break
-    /// existing portals), create a new one.
+    /// existing portals), it's better to just create a new one. That's why
+    /// this class does not provide any methods to reparse
     final void postParseMessage()
     {
         conn.putParseMessage(parsedName, query, paramTypes[]);
@@ -181,8 +182,8 @@ class Portal(ConnT)
             portalName = "";
     }
 
-    /// bind empty, parameterless portal. resCodes are format codes of resulting
-    /// columns.
+    /// bind empty, parameterless portal. resCodes are requested format codes
+    /// of resulting columns.
     final void bind(FormatCode[] resCodes = null)
     {
         assert(prepStmt.paramCount == 0);
@@ -229,8 +230,11 @@ class Portal(ConnT)
         bindRequested = true;
     }
 
-    /// Generic InputRanges of types and field marshallers, to pass them
-    /// directly to putBindMessage. No validation performed.
+    /// This version of bind accept generic InputRanges of format codes and
+    /// field marshallers and passes them directly to putBindMessage method of
+    /// connection object. No parameter count and type validation is performed.
+    /// If this portal is already bound and is a named one, Close message is
+    /// posted.
     final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
         scope RR returnCodeRange)
     {
@@ -241,6 +245,46 @@ class Portal(ConnT)
         conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
             paramMarshRange, returnCodeRange);
         bindRequested = true;
+    }
+
+    /// Simple portal bind, wich binds all parameters as strings and requests
+    /// all result columns in text format code
+    final void bind(scope Nullable!(string)[] args)
+    {
+        assert(prepStmt.paramCount == args.length);
+
+        if (bindRequested && portalName.length)
+            postCloseMessage();
+
+        static struct StrMarshaller
+        {
+            Nullable!string str;
+
+            this(Nullable!string v)
+            {
+                str = v;
+            }
+
+            int opCall(ubyte[] buf)
+            {
+                return marshalNullableStringField(buf, str);
+            }
+        }
+
+        static struct MarshRange
+        {
+            Nullable!(string)[] params;
+            int idx = 0;
+            @property bool empty() { return idx >= params.length; }
+            void popFront() { idx++; }
+            @property StrMarshaller front()
+            {
+                return StrMarshaller(params[idx]);
+            }
+        }
+
+        conn.putBindMessage!(FormatCode[], MarshRange, FormatCode[])(
+            portalName, prepStmt.parsedName, null, MarshRange(args), null);
     }
 
     /// explicit close for persistent prepared statements
@@ -396,6 +440,51 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
 
     conn.pollMessages(&interceptor, false);
     return res;
+}
+
+
+/// Poll messages from the connection until CommandComplete or EmptyQueryResponse
+/// is received, and return one row block (result of one and only one query).
+RowBlock getOneRowBlock(ConnT)(ConnT conn, bool requireRowDescription = false)
+{
+    RowBlock result;
+
+    bool interceptor(Message msg, ref bool err, ref string errMsg) nothrow
+    {
+        with (BackendMessageType)
+        switch (msg.type)
+        {
+            case EmptyQueryResponse:
+                result.emptyQuery = true;
+                return true;
+            case CommandComplete:
+                return true;
+            case PortalSuspended:
+                err = true;
+                errMsg = "Dpeq cannot handle suspended portals, " ~
+                    "do not limit row count in Execute message.";
+                break;
+            case RowDescription:
+                result.rowDesc = dpeq.schema.RowDescription(msg.data);
+                requireRowDescription = false;
+                break;
+            case DataRow:
+                if (requireRowDescription)
+                {
+                    err = true;
+                    errMsg ~= "Got row without row description ";
+                    break;
+                }
+                result.dataRows ~= msg;
+                break;
+            default:
+                break;
+        }
+        return false;
+    }
+
+    conn.pollMessages(&interceptor, true);
+    return result;
 }
 
 

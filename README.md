@@ -576,6 +576,11 @@ void transactionExample()
             // since we don't send sync (wich would close the implicit transaction),
             // backend will not return result of this select until we request it
             // via Flush message
+            // Note, that since we didn't end Sync message, no ReadyForQuery will
+            // be sent by backend. If you wish to query results of the execute
+            // above, you cannot use getQueryResults (it will block forever) 
+            // but you can use getOneRowBlock call, wich will not wait for
+            // ReadyForQuery.
             con.putFlushMessage();
             con.flush();
             // at this point backend will aquire row-level locks on dpeq_test

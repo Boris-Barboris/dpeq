@@ -418,7 +418,7 @@ class PSQLConnection(
     }
 
     final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
-    //  if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID) &&
+        if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID))
     {
         logDebug("Message to parse query: %s", query);
 
