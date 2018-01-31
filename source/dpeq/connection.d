@@ -87,6 +87,12 @@ struct Message
     ubyte[] data;
 }
 
+enum StmtOrPortal: char
+{
+    Statement = 'S',
+    Portal = 'P'
+}
+
 private void nop_logger(T...)(lazy T vals) {}
 
 /// assign some nop function to logDebug when you're fine with results.
@@ -359,7 +365,7 @@ class PSQLConnection(
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    final void putCloseMessage(char closeWhat, string name)
+    final void putCloseMessage(StmtOrPortal closeWhat, string name)
     {
         ensureOpen();
         assert(closeWhat == 'S' || closeWhat == 'P');
@@ -374,7 +380,7 @@ class PSQLConnection(
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    final void putDescribeMessage(char descWhat, string name)
+    final void putDescribeMessage(StmtOrPortal descWhat, string name)
     {
         ensureOpen();
         assert(descWhat == 'S' || descWhat == 'P');

@@ -133,7 +133,7 @@ class PreparedStatement(ConnT)
         /** An unnamed prepared statement lasts only until the next Parse
         statement specifying the unnamed statement as destination is issued.
         (Note that a simple Query message also destroys the unnamed statement.) */
-        conn.putCloseMessage('S', parsedName);
+        conn.putCloseMessage(StmtOrPortal.Statement, parsedName);
         parseRequested = false;
     }
 
@@ -301,7 +301,7 @@ class Portal(ConnT)
         Named portals must be explicitly closed before they can be redefined
         by another Bind message, but this is not required for the unnamed portal.
         */
-        conn.putCloseMessage('P', portalName);
+        conn.putCloseMessage(StmtOrPortal.Portal, portalName);
         bindRequested = false;
     }
 
@@ -333,7 +333,7 @@ class Portal(ConnT)
     {
         assert(bindRequested);
         if (describe)
-            conn.putDescribeMessage('P', portalName);
+            conn.putDescribeMessage(StmtOrPortal.Portal, portalName);
         conn.putExecuteMessage(portalName);
     }
 }
