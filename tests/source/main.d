@@ -289,7 +289,6 @@ void notifyExample()
         con.terminate();
     }
 
-
     void threadFunc2()
     {
         auto con = new ConT(

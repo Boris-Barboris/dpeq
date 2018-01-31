@@ -663,3 +663,52 @@ void transactionExample()
     thread2.join();
 }
 ```
+### Notify/Listen
+```D
+/// example wich demonstrates PSQL notify
+void notifyExample()
+{
+    void threadFunc1()
+    {
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+        Thread.sleep(msecs(500));   // make sure second thread has connected
+        // simple query to notify thread2
+        con.postSimpleQuery("NOTIFY chan1, 'Payload1337';");
+        con.flush();
+        // pollMessages(null) is cheaper alternative to getQueryResult when
+        // you don't care about the data being returned
+        con.pollMessages(null);
+        con.terminate();
+    }
+
+    void threadFunc2()
+    {
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+        Notification inbox;
+        // we set up the callback wich will be used to route notification
+        // message during pollMessages call.
+        con.notificationCallback = (Notification n) { inbox = n; return true; };
+        // subscribe to channel
+        con.postSimpleQuery("LISTEN chan1;");
+        con.flush();
+        con.pollMessages(null);
+        // this poll blocks for approx half a second, because we sleep in first 
+        // thread. Poll exits since we return true in notificationCallback.
+        con.pollMessages(null);
+        con.terminate();
+        // we have received the correct data
+        assert(inbox.channel == "chan1");
+        assert(inbox.payload == "Payload1337");
+    }
+
+    auto thread1 = new Thread(&threadFunc1).start();
+    auto thread2 = new Thread(&threadFunc2).start();
+
+    thread1.join();
+    thread2.join();
+}
+```
