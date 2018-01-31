@@ -296,7 +296,7 @@ void notifyExample()
             BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
             "r00tme", "dpeqtestdb"));
         Notification inbox;
-        con.notificationCallback = (Notification n) { inbox = n; return true; }
+        con.notificationCallback = (Notification n) { inbox = n; return true; };
         con.postSimpleQuery("LISTEN chan1;");
         con.flush();
         con.pollMessages(null);

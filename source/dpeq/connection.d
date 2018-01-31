@@ -478,6 +478,8 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
+    /// Set this callback in order to process incoming NotificationResponse messages.
+    /// https://www.postgresql.org/docs/9.5/static/sql-notify.html
     bool delegate(Notification n) nothrow notificationCallback = null;
 
     /** When this callback returns true, pollMessages will exit it's loop.
