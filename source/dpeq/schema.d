@@ -27,7 +27,7 @@ struct FieldDescription
     @property string name()
     {
         // from c-string to d-string, no allocation
-        return demarshalString(m_buf, nameLength - 1);
+        return demarshalString(m_buf[0..nameLength-1]);
     }
 
     /// If the field can be identified as a column of a specific table,
@@ -163,4 +163,19 @@ struct RowBlock
     /// set when the server responded with EmptyQueryResponse to sql query
     /// this row block answers to.
     bool emptyQuery;
+}
+
+
+/// NotificationResponse message received from the backend.
+/// https://www.postgresql.org/docs/9.5/static/sql-notify.html
+struct Notification
+{
+    /// The process ID of the notifying backend process.
+    int procId;
+
+    /// The name of the channel that the notify has been raised on.
+    string channel;
+
+    /// The "payload" string passed from the notifying process.
+    string payload;
 }

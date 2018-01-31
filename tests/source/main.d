@@ -83,6 +83,13 @@ string insertCommand()
 
 alias ConT = PSQLConnection!(StdSocket);
 
+void createTestSchema(ConT)(ConT con)
+{
+    con.postSimpleQuery(createTableCommand());
+    con.flush();
+    con.getQueryResults();
+}
+
 void main()
 {
     auto con = new ConT(
@@ -160,13 +167,7 @@ void main()
 
     // other tests:
     transactionExample();
-}
-
-void createTestSchema(ConT)(ConT con)
-{
-    con.postSimpleQuery(createTableCommand());
-    con.flush();
-    con.getQueryResults();
+    notifyExample();
 }
 
 
@@ -261,6 +262,49 @@ void transactionExample()
         assert(rows.front[0] == true,
             "First thread's commit is not visible in second thread");
         con.terminate();
+    }
+
+    auto thread1 = new Thread(&threadFunc1).start();
+    auto thread2 = new Thread(&threadFunc2).start();
+
+    thread1.join();
+    thread2.join();
+}
+
+
+
+
+/// example wich demonstrates PSQL notify
+void notifyExample()
+{
+    void threadFunc1()
+    {
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+        Thread.sleep(msecs(500));   // make sure second thread has connected
+        con.postSimpleQuery("NOTIFY chan1, 'Payload1337';");
+        con.flush();
+        con.pollMessages(null);
+        con.terminate();
+    }
+
+
+    void threadFunc2()
+    {
+        auto con = new ConT(
+            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+            "r00tme", "dpeqtestdb"));
+        Notification inbox;
+        con.notificationCallback = (Notification n) { inbox = n; return true; }
+        con.postSimpleQuery("LISTEN chan1;");
+        con.flush();
+        con.pollMessages(null);
+        // blocks for approx half a second
+        con.pollMessages(null);
+        con.terminate();
+        assert(inbox.channel == "chan1");
+        assert(inbox.payload == "Payload1337");
     }
 
     auto thread1 = new Thread(&threadFunc1).start();

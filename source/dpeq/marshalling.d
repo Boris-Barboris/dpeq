@@ -260,7 +260,7 @@ T demarshalFixedField(T)(const(ubyte)[] from, in FormatCode fCode, in int len)
         return bigEndianToNative!T(from[0 .. T.sizeof]);
     }
     else if (fCode == FormatCode.Text)
-        return demarshalString(from[0 .. len], len).to!T;
+        return demarshalString(from[0 .. len]).to!T;
     else
         throw new PsqlClientException("Unsupported FormatCode");
 }
@@ -277,7 +277,7 @@ Nullable!T demarshalNullableFixedField(T)
         return Nullable!T(bigEndianToNative!T(from[0 .. T.sizeof]));
     }
     else if (fCode == FormatCode.Text)
-        return Nullable!T(demarshalString(from[0 .. len], len).to!T);
+        return Nullable!T(demarshalString(from[0 .. len]).to!T);
     else
         throw new PsqlClientException("Unsupported FormatCode");
 }
@@ -306,10 +306,27 @@ Nullable!string demarshalNullableStringField(Dummy = void)
     return Nullable!string(res);
 }
 
-/// service function
-string demarshalString(const(ubyte)[] from, in size_t length)
+/// dpeq utility function
+string demarshalString(const(ubyte)[] from)
 {
-    return (cast(immutable(char)*)(from.ptr))[0 .. length];
+    return (cast(immutable(char)*)(from.ptr))[0 .. from.length];
+}
+
+/// dpeq utility function. Demarshal zero-terminated string from byte buffer
+string demarshalProtocolString(const(ubyte)[] from, ref size_t length)
+{
+    size_t l = 0;
+    while (from[l])
+    {
+        l++;
+        if (l >= from.length)
+            throw new PsqlClientException("Null-terminated string is not " ~
+                "null-terminated");
+    }
+    length = l + 1;
+    if (l == 0)
+        return string.init;
+    return demarshalString(from[0..l]);
 }
 
 Nullable!UUID demarshalNullableUuidField(Dummy = void)

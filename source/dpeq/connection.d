@@ -19,6 +19,7 @@ import std.socket;
 import dpeq.constants;
 import dpeq.exceptions;
 import dpeq.marshalling;
+import dpeq.schema: Notification;
 
 
 
@@ -477,6 +478,8 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
+    bool delegate(Notification n) nothrow notificationCallback = null;
+
     /** When this callback returns true, pollMessages will exit it's loop.
     Interceptor should set err to true if it has encountered some kind of error
     and wants it to be rethrown as PsqlClientException at the end of
@@ -525,8 +528,19 @@ class PSQLConnection(
                     break;
                 case NoticeResponse:
                     if (msg.data[0] != 0)
-                        logDebug(demarshalString(msg.data[1..$], msg.data.length - 2));
+                        logDebug(demarshalString(msg.data[1..$-1]));
                     continue;
+                case NotificationResponse:
+                    if (notificationCallback !is null)
+                    {
+                        Notification n;
+                        n.procId = demarshalNumber!int(msg.data[0..4]);
+                        size_t l;
+                        n.channel = demarshalProtocolString(msg.data[4..$], l);
+                        n.payload = demarshalString(msg.data[4+l..$-1]);
+                        finish |= notificationCallback(n);
+                    }
+                    break;
                 default:
                     if (interceptor !is null)
                         finish |= interceptor(msg, intError, intErrMsg);
