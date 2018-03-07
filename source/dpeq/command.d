@@ -370,8 +370,8 @@ struct QueryResult
 
 /// Generic method, suitable for both simple and prepared queries.
 /// Polls messages from connection object and builds QueryResult structure from
-/// the messages. Throws if something goes wrong. Polling stops after
-/// ReadyForQuery message from the backend.
+/// the messages. Throws if something goes wrong. Polling stops when
+/// ReadyForQuery message is received.
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;

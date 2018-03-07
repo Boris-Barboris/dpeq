@@ -324,5 +324,10 @@ version(Posix)
         // Default BackendParams.host is set to
         // /var/run/postgresql/.s.PGSQL.5432
         auto con = new ConT(BackendParams());
+        con.postSimpleQuery("select version();");
+        con.flush();
+        auto res = con.getQueryResults();
+        auto firstRow = blockToVariants(res.blocks[0])[0];
+        writeln("psql version: ", firstRow.front);
     }
 }
