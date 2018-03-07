@@ -23,28 +23,52 @@ import dpeq.schema: Notification;
 
 
 
-/// std.socket wrapper wich is compatible with PSQLConnection.
-/// If you want to use custom sockets (vibe-d, unix-domain etc), make them
-/// duck-type and exception-compatible with this one.
+/**
+$(D std.socket.Socket) wrapper wich is compatible with PSQLConnection.
+If you want to use custom socket type (vibe-d or any other), make it
+duck-type and exception-compatible with this one.
+*/
 final class StdSocket
 {
-    protected Socket m_socket;
+    private Socket m_socket;
 
+    /// Underlying socket instance.
+    @property Socket socket() { return m_socket; }
+
+    /// Establish connection to backend. Constructor is expected to throw Exception
+    /// if anything goes wrong.
     this(string host, ushort port)
     {
-        m_socket = new TcpSocket();
-        // receive timeout to the better safe than sorry 2 minutes value
-        m_socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, seconds(120));
-        m_socket.connect(new InternetAddress(host, port));
+        if (host[0] == '/')
+        {
+            // Unix socket
+            version(Posix)
+            {
+                Address addr = new UnixAddress(host);
+                m_socket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
+                m_socket.connect(addr);
+            }
+            else
+                assert(0, "Cannot connect using UNIX sockets on non-Posix OS");
+        }
+        else
+        {
+            m_socket = new TcpSocket();
+            // 20 minutes for both tcp_keepalive_time and tcp_keepalive_intvl
+            m_socket.setKeepAlive(1200, 1200);
+            // example of receive timeout:
+            // m_socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, seconds(120));
+            m_socket.connect(new InternetAddress(host, port));
+        }
     }
 
-    void close()
+    void close() nothrow @nogc
     {
         m_socket.shutdown(SocketShutdown.BOTH);
         m_socket.close();
     }
 
-    // Throw PsqlSocketException when something bad happens
+    /// Send whole byte buffer or throw. Throws: $(D PsqlSocketException).
     auto send(const(ubyte)[] buf)
     {
         auto r = m_socket.send(buf);
@@ -53,7 +77,8 @@ final class StdSocket
         return r;
     }
 
-    // Throw PsqlSocketException when something bad happens
+    /// Fill byte buffer from the socket completely or throw.
+    /// Throws: $(D PsqlSocketException).
     auto receive(ubyte[] buf)
     {
         auto r = m_socket.receive(buf);
@@ -67,24 +92,24 @@ final class StdSocket
 
 
 
-/// Connection and authorization parameters
+/// Transport and authorization parameters
 struct BackendParams
 {
-    string host;
+    /// Hostname or IP address for TCP socket. Filename for UNIX socket.
+    string host = "/var/run/postgresql/.s.PGSQL.5432";
     ushort port = cast(ushort)5432;
-    string user;
+    string user = "postgres";
     string password;
-    string database;
+    string database = "postgres";
 }
 
 
-/// Message, received from backend
+/// Message, received from backend.
 struct Message
 {
     BackendMessageType type;
-
-    /// raw network-order (big-endian) byte array, without first 4
-    /// bytes wich represent message body length in original protocol
+    /// Raw unprocessed message byte array without first 4 bytes wich represent
+    /// message body length.
     ubyte[] data;
 }
 
@@ -94,19 +119,25 @@ enum StmtOrPortal: char
     Portal = 'P'
 }
 
-private void nop_logger(T...)(lazy T vals) {}
+private void nop_logger(T...)(T vals) {}
 
-/// assign some nop function to logDebug when you're fine with results.
-/// logDebug and logError are expected to accept format string and arguments,
-/// just like printf.
+/**
+Connection object.
+
+Params:
+    SocketT  = socket class type to use.
+    logTrace = logging function with $(D std.stdio.writef) signature. Extremely
+        verbose byte-stream information will be printed through it.
+    logError = same as logTrace but for errors.
+*/
 class PSQLConnection(
     SocketT = StdSocket,
-    alias logDebug = nop_logger,
+    alias logTrace = nop_logger,
     alias logError = nop_logger)
 {
     protected
     {
-        SocketT socket;
+        SocketT m_socket;
         ubyte[] writeBuffer;
         int bufHead = 0;
         bool open = false;
@@ -121,8 +152,11 @@ class PSQLConnection(
         int portalCounter = 0;
     }
 
-    /// Number of ReadyForQuery messages that are yet to be recieved
-    /// from the database. May be useful for checking wether getQueryResults
+    /// Socket getter.
+    final @property SocketT socket() { return m_socket; }
+
+    /// Number of ReadyForQuery messages that are yet to be received
+    /// from the backend. May be useful for checking wether getQueryResults
     /// would block forever.
     final @property int expectedRFQCount() const { return readyForQueryExpected; }
 
@@ -138,39 +172,42 @@ class PSQLConnection(
 
     /// Connection is open when it is authorized and socket was alive last time
     /// it was checked.
-    final @property bool isOpen() { return open; }
+    final @property bool isOpen() const { return open; }
 
+    /// Generate next connection-unique prepared statement name.
     final string getNewPreparedName()
     {
         return (preparedCounter++).to!string;
     }
 
+    /// Generate next connection-unique portal name.
     final string getNewPortalName()
     {
         return (portalCounter++).to!string;
     }
 
-    /// allocate memory, start TCP connection and authorize
+    /// Allocate reuired memory, build socket and authorize the connection.
+    /// Throws: $(D PsqlSocketException) if transport failed, or
+    /// $(D PsqlClientException) if authorization failed for some reason.
     this(in BackendParams bp)
     {
-        writeBuffer.length = 4 * 4096;     // liberal procurement
+        writeBuffer.length = 4 * 4096; // liberal procurement
         try
         {
-            logDebug("Trying to open TCP connection to PSQL");
-            socket = new SocketT(bp.host, bp.port);
-            logDebug("Success");
+            logTrace("Trying to open TCP connection to PSQL");
+            m_socket = new SocketT(bp.host, bp.port);
+            logTrace("Success");
         }
         catch (Exception e)
         {
             throw new PsqlSocketException(e.msg, e);
         }
-        scope(failure) socket.close();
+        scope(failure) m_socket.close();
         initialize(bp);
         open = true;
     }
 
-    /// notify backend and close socket. It may throw when socket is already
-    /// closed, so be aware.
+    /// Notify backend and close socket.
     void terminate()
     {
         open = false;
@@ -178,7 +215,7 @@ class PSQLConnection(
         {
             putTerminateMessage();
             flush();
-            socket.close();
+            m_socket.close();
         }
         catch (Exception e)
         {
@@ -186,17 +223,18 @@ class PSQLConnection(
         }
     }
 
-    /// flush writeBuffer into the socket. This one blocks/yields.
+    /// Flush writeBuffer into the socket. Blocks/yields (according to socket
+    /// implementation).
     final void flush()
     {
         try
         {
             // does not block if zero length:
             // https://github.com/vibe-d/vibe-core/blob/master/source/vibe/core/net.d#L607
-            auto w = socket.send(writeBuffer[0..bufHead]);
+            auto w = m_socket.send(writeBuffer[0..bufHead]);
             while (bufHead - w > 0)
-                w += socket.send(writeBuffer[w..bufHead]);
-            logDebug("flushed %d bytes: %s", w, writeBuffer[0..bufHead].to!string);
+                w += m_socket.send(writeBuffer[w..bufHead]);
+            logTrace("flushed %d bytes: %s", w, writeBuffer[0..bufHead].to!string);
         }
         catch (PsqlSocketException e)
         {
@@ -294,7 +332,7 @@ class PSQLConnection(
         auto fcodePrefix = reserveLen!short();
         foreach (FormatCode fcode; formatCodes)
         {
-            logDebug("Bind: writing %d fcode", fcode);
+            logTrace("Bind: writing %d fcode", fcode);
             write(cast(short)fcode);
             fcodes++;
         }
@@ -307,7 +345,7 @@ class PSQLConnection(
         {
             auto paramPrefix = reserveLen!int();
             int r = wrappedMarsh(param);
-            logDebug("Bind: wrote 4bytes + %d bytes for value", r);
+            logTrace("Bind: wrote 4bytes + %d bytes for value", r);
             paramPrefix.write(r);    // careful! -1 means Null
             pcount++;
         }
@@ -319,13 +357,13 @@ class PSQLConnection(
         foreach (FormatCode fcode; resultFormatCodes)
         {
             write(cast(short)fcode);
-            logDebug("Bind: writing %d rfcode", fcode);
+            logTrace("Bind: writing %d rfcode", fcode);
             rcount++;
         }
         rcolPrefix.write(rcount);
 
         lenTotal.fill();
-        logDebug("Bind message buffered");
+        logTrace("Bind message buffered");
     }
 
     /// putBindMessage overload for parameterless portals
@@ -354,13 +392,13 @@ class PSQLConnection(
         foreach (FormatCode fcode; resultFormatCodes)
         {
             write(cast(short)fcode);
-            logDebug("Bind: writing %d rfcode", fcode);
+            logTrace("Bind: writing %d rfcode", fcode);
             rcount++;
         }
         rcolPrefix.write(rcount);
 
         lenTotal.fill();
-        logDebug("Bind message buffered");
+        logTrace("Bind message buffered");
     }
 
     /// put Close message into write buffer.
@@ -375,7 +413,7 @@ class PSQLConnection(
         write(cast(ubyte)closeWhat);
         cwrite(name);
         lenTotal.fill();
-        logDebug("Close message buffered");
+        logTrace("Close message buffered");
     }
 
     /// put Close message into write buffer.
@@ -390,7 +428,7 @@ class PSQLConnection(
         write(cast(ubyte)descWhat);
         cwrite(name);
         lenTotal.fill();
-        logDebug("Describe message buffered");
+        logTrace("Describe message buffered");
     }
 
     /**
@@ -404,7 +442,7 @@ class PSQLConnection(
         cwrite(portal);
         write(maxRows);
         lenTotal.fill();
-        logDebug("Execute message buffered");
+        logTrace("Execute message buffered");
     }
 
     /**
@@ -421,13 +459,13 @@ class PSQLConnection(
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Flush);
         write(4);
-        logDebug("Flush message buffered");
+        logTrace("Flush message buffered");
     }
 
     final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
         if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID))
     {
-        logDebug("Message to parse query: %s", query);
+        logTrace("Message to parse query: %s", query);
 
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Parse);
@@ -446,10 +484,10 @@ class PSQLConnection(
         pcountPrefix.write(pcount);
 
         lenTotal.fill();
-        logDebug("Parse message buffered");
+        logTrace("Parse message buffered");
     }
 
-    /// put Query message (simple query protocol)
+    /// put Query message (simple query protocol) into the write buffer
     final void putQueryMessage(string query)
     {
         ensureOpen();
@@ -458,7 +496,7 @@ class PSQLConnection(
         cwrite(query);
         lenTotal.fill();
         readyForQueryExpected++;
-        logDebug("Query message buffered");
+        logTrace("Query message buffered");
     }
 
     alias putSimpleQuery = putQueryMessage;
@@ -473,7 +511,7 @@ class PSQLConnection(
         write(cast(ubyte)FrontMessageType.Sync);
         write(4);
         readyForQueryExpected++;
-        logDebug("Sync message buffered");
+        logTrace("Sync message buffered");
     }
 
     alias sync = putSyncMessage;
@@ -530,7 +568,7 @@ class PSQLConnection(
                     break;
                 case NoticeResponse:
                     if (msg.data[0] != 0)
-                        logDebug(demarshalString(msg.data[1..$-1]));
+                        logTrace(demarshalString(msg.data[1..$-1]));
                     continue;
                 case NotificationResponse:
                     if (notificationCallback !is null)
@@ -581,14 +619,14 @@ protected:
         cwrite(params.database);
         write(cast(ubyte)0);
         lenPrefix.fill();
-        logDebug("Startup message buffered");
+        logTrace("Startup message buffered");
     }
 
     final void putTerminateMessage()
     {
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
-        logDebug("Terminate message buffered");
+        logTrace("Terminate message buffered");
     }
 
     final void initialize(in BackendParams params)
@@ -607,7 +645,7 @@ protected:
                     {
                         e = true;
                         eMsg ~= "Unexpected second Authentication " ~
-                            "message from backend";
+                            "message received from backend";
                     }
                     authType = demarshalNumber(msg.data[0..4]);
                     if (authType == 0)  // instantly authorized, so we'll get readyForQuery
@@ -619,12 +657,12 @@ protected:
             }, true);
 
         enforce!PsqlClientException(authType != -1,
-            "No Authentication message received");
+            "Expected Authentication message was not received");
         switch (authType)
         {
             case 0:
-                // AuthenticationOk, lul
-                logDebug("Succesfully authorized");
+                // instant AuthenticationOk, trusted connection usually does this
+                logTrace("Succesfully authorized");
                 return;
             case 3:
                 // cleartext password
@@ -632,7 +670,6 @@ protected:
                 break;
             case 5:
                 // MD5 salted password
-                assert(auth_msg.data);
                 ubyte[4] salt = auth_msg.data[4 .. 8];
                 putMd5PasswordMessage(params.password, params.user, salt);
                 break;
@@ -648,7 +685,8 @@ protected:
                     authRes = demarshalNumber(msg.data[0..4]);
                 return false;
             });
-        enforce!PsqlClientException(authRes == 0, "No AuthenticationOk message");
+        enforce!PsqlClientException(authRes == 0,
+            "Expected AuthenticationOk message was not received");
     }
 
     final void putPasswordMessage(string pw)
@@ -658,12 +696,12 @@ protected:
         cwrite(pw);
         lenPrefix.fill();
         readyForQueryExpected++;
-        logDebug("Password message buffered");
+        logTrace("Password message buffered");
     }
 
     final void putMd5PasswordMessage(string pw, string user, ubyte[4] salt)
     {
-        // thank you hb-ddb authors
+        // thank you ddb authors
         char[32] MD5toHex(T...)(in T data)
         {
             import std.ascii : LetterCase;
@@ -676,30 +714,30 @@ protected:
         char[3 + 32] mdpw;
         mdpw[0 .. 3] = "md5";
         mdpw[3 .. $] = MD5toHex(MD5toHex(pw, user), salt);
-        cwrite(mdpw.to!string);
+        cwrite(cast(string) mdpw[]);
         lenPrefix.fill();
         readyForQueryExpected++;
-        logDebug("MD5 Password message buffered");
+        logTrace("MD5 Password message buffered");
     }
 
     final void handleErrorMessage(ubyte[] data, ref string msg)
     {
         void copyTillZero()
         {
-            //logDebug("copyTillZero " ~ data.to!string);
+            //logTrace("copyTillZero " ~ data.to!string);
             int idx = 0;
             while (data[idx])
             {
                 msg ~= cast(char)data[idx];
                 idx++;
             }
-            //logDebug("idx %d", idx);
+            //logTrace("idx %d", idx);
             data = data[idx+1..$];
         }
 
         void discardTillZero()
         {
-            //logDebug("discardTillZero " ~ data.to!string);
+            //logTrace("discardTillZero " ~ data.to!string);
             if (!data.length)
                 return;
             int idx = 0;
@@ -709,14 +747,14 @@ protected:
                 else
                     break;
             data = data[idx+1..$];
-            //logDebug("discardTillZero2 " ~ data.to!string);
+            //logTrace("discardTillZero2 " ~ data.to!string);
         }
 
         // would be nice to handle:
         // https://www.postgresql.org/docs/9.5/static/errcodes-appendix.html
         while (data.length > 0)
         {
-            //logDebug("data = " ~ (cast(string)data).to!string);
+            //logTrace("data = " ~ (cast(string)data).to!string);
             char fieldType = cast(char) data[0];
             data = data[1..$];
             switch (fieldType)
@@ -741,11 +779,11 @@ protected:
     {
         try
         {
-            logDebug("reading %d bytes", buf.length);
+            logTrace("reading %d bytes", buf.length);
             // TODO: make sure this code is generic enough for all sockets
-            auto r = socket.receive(buf);
+            auto r = m_socket.receive(buf);
             assert(r == buf.length);
-            //logDebug("read %d bytes", r);
+            //logTrace("received %d bytes", r);
         }
         catch (PsqlSocketException e)
         {
@@ -796,7 +834,7 @@ protected:
                 }
                 else
                     assert(len >= T.sizeof);
-                logDebug("writing length of %d bytes to index %d", len, idx);
+                logTrace("writing length of %d bytes to index %d", len, idx);
                 auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], len);
                 assert(res == T.sizeof);
             }
@@ -831,7 +869,7 @@ protected:
         ubyte[1] type;
         read(type);
         res.type = cast(BackendMessageType) type[0];
-        logDebug("Got message of type " ~ res.type.to!string);
+        logTrace("Got message of type %s", res.type.to!string);
         ubyte[4] length_arr;
         read(length_arr);
         int length = demarshalNumber(length_arr) - 4;

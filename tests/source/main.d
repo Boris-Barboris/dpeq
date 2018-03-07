@@ -168,6 +168,7 @@ void main()
     // other tests:
     transactionExample();
     notifyExample();
+    version(Posix) unixSocketExample();
 }
 
 
@@ -311,4 +312,17 @@ void notifyExample()
 
     thread1.join();
     thread2.join();
+}
+
+
+
+version(Posix)
+{
+    /// example wich demonstrates connection through Unix-domain socket
+    void unixSocketExample()
+    {
+        // Default BackendParams.host is set to
+        // /var/run/postgresql/.s.PGSQL.5432
+        auto con = new ConT(BackendParams());
+    }
 }
