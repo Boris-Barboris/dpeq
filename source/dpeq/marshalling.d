@@ -312,7 +312,7 @@ string demarshalString(const(ubyte)[] from)
     return (cast(immutable(char)*)(from.ptr))[0 .. from.length];
 }
 
-/// dpeq utility function. Demarshal zero-terminated string from byte buffer
+/// dpeq utility function. Demarshal zero-terminated string from byte buffer.
 string demarshalProtocolString(const(ubyte)[] from, ref size_t length)
 {
     size_t l = 0;

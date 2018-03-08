@@ -19,7 +19,7 @@ import std.socket;
 import dpeq.constants;
 import dpeq.exceptions;
 import dpeq.marshalling;
-import dpeq.schema: Notification;
+import dpeq.schema: Notification, Notice;
 
 
 
@@ -92,7 +92,7 @@ final class StdSocket
 
 
 
-/// Transport and authorization parameters
+/// Transport and authorization parameters.
 struct BackendParams
 {
     /// Hostname or IP address for TCP socket. Filename for UNIX socket.
@@ -108,8 +108,8 @@ struct BackendParams
 struct Message
 {
     BackendMessageType type;
-    /// Raw unprocessed message byte array without first 4 bytes wich represent
-    /// message body length.
+    /// Raw unprocessed message byte array excluding message type byte and
+    /// first 4 bytes that represent message body length.
     ubyte[] data;
 }
 
@@ -119,15 +119,16 @@ enum StmtOrPortal: char
     Portal = 'P'
 }
 
-private void nop_logger(T...)(T vals) {}
+// When the client code is uninterested in dpeq connection logging.
+private pragma(inline, true) void nop_logger(T...)(T vals) {}
 
 /**
 Connection object.
 
 Params:
     SocketT  = socket class type to use.
-    logTrace = logging function with $(D std.stdio.writef) signature. Extremely
-        verbose byte-stream information will be printed through it.
+    logTrace = alias of a logging function with $(D std.stdio.writef) signature.
+        Very verbose byte-stream information will be printed through it.
     logError = same as logTrace but for errors.
 */
 class PSQLConnection(
@@ -150,7 +151,25 @@ class PSQLConnection(
         /// counters to generate unique prepared statement and portal ids
         int preparedCounter = 0;
         int portalCounter = 0;
+
+        int m_processId = -1;
+        int m_cancellationKey = -1;
+
+        /// backend params this connection was created with
+        const BackendParams m_backendParams;
     }
+
+    /// Backend parameters this connection was constructed from
+    final @property ref const(BackendParams) backendParams() const
+    {
+        return m_backendParams;
+    }
+
+    /// Backend process ID. Used in CancelRequest message.
+    final @property int processId() const { return m_processId; }
+
+    /// Cancellation secret. Used in CancelRequest message.
+    final @property int cancellationKey() const { return m_cancellationKey; }
 
     /// Socket getter.
     final @property SocketT socket() { return m_socket; }
@@ -189,9 +208,10 @@ class PSQLConnection(
     /// Allocate reuired memory, build socket and authorize the connection.
     /// Throws: $(D PsqlSocketException) if transport failed, or
     /// $(D PsqlClientException) if authorization failed for some reason.
-    this(in BackendParams bp)
+    this(const BackendParams bp)
     {
-        writeBuffer.length = 4 * 4096; // liberal procurement
+        m_backendParams = bp;
+        writeBuffer.length = 2 * 4096; // liberal procurement of two pages
         try
         {
             logTrace("Trying to open TCP connection to PSQL");
@@ -221,6 +241,22 @@ class PSQLConnection(
         {
             logError("Exception caught while terminating PSQL connection: %s", e.msg);
         }
+    }
+
+    /**
+    Open new socket and connect it to the same backend as this connection is
+    bound to, send CancelRequest and close socket.
+    */
+    void cancelRequest()
+    {
+        SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port);
+        ubyte[4 * 4] intBuf;
+        marshalFixedField(intBuf[0..4], int(16));
+        marshalFixedField(intBuf[4..8], int(80877102));
+        marshalFixedField(intBuf[8..12], m_processId);
+        marshalFixedField(intBuf[12..16], m_cancellationKey);
+        sock.send(intBuf[]);
+        sock.close();
     }
 
     /// Flush writeBuffer into the socket. Blocks/yields (according to socket
@@ -516,9 +552,14 @@ class PSQLConnection(
 
     alias sync = putSyncMessage;
 
-    /// Set this callback in order to process incoming NotificationResponse messages.
+    /// NotificationResponse messages will be parsed and passed to this
+    /// callback during 'pollMessages' call.
     /// https://www.postgresql.org/docs/9.5/static/sql-notify.html
-    bool delegate(Notification n) nothrow notificationCallback = null;
+    bool delegate(typeof(this) con, Notification n) nothrow notificationCallback = null;
+
+    /// NoticeResponse messages will be parsed and
+    /// passed to this callback during 'pollMessages' call.
+    void delegate(typeof(this) con, Notice n) nothrow noticeCallback = null;
 
     /** When this callback returns true, pollMessages will exit it's loop.
     Interceptor should set err to true if it has encountered some kind of error
@@ -527,21 +568,21 @@ class PSQLConnection(
     alias InterceptorT = bool delegate(Message msg, ref bool err,
         ref string errMsg) nothrow;
 
-    /** this function reads messages from the socket in loop until:
-    *     1). if finishOnError is set and ErrorResponse is received, function
-    *         throws immediately.
-    *     2). if ReadyForQuery message is received.
-    *     3). interceptor delegate returnes `true`.
-    *   Interceptor delegate is used to customize the logic. If the message is
-    *   not ReadyForQuery or ErrorResponse, it is passed to interceptor. It may
-    *   set bool flag to true and append to error message string, if delayed throw
-    *   is required.
-    */
+    /** Read messages from the socket in loop until:
+      1). if finishOnError is set and ErrorResponse is received, function
+          throws immediately.
+      2). ReadyForQuery message is received.
+      3). interceptor delegate returns `true`.
+      4). NotificationResponse received and notificationCallback returned 'true'.
+    Interceptor delegate is used to customize the logic. If the message is
+    not ReadyForQuery, ErrorResponse or Notice\Notification, it is passed to
+    interceptor. It may set bool 'err' flag to true and append to 'errMsg'
+    string, if delayed throw is required. */
     final void pollMessages(scope InterceptorT interceptor, bool finishOnError = false)
     {
         bool finish = false;
         bool error = false;
-        string eMsg;
+        Notice errorNotice;
         bool intError = false;
         string intErrMsg;
 
@@ -553,9 +594,10 @@ class PSQLConnection(
             switch (msg.type)
             {
                 case ErrorResponse:
+                    enforce!PsqlClientException(!error, "Second ErrorResponse " ~
+                        "received during one pollMessages call");
                     error = true;
-                    eMsg.reserve(256);
-                    handleErrorMessage(msg.data, eMsg);
+                    parseNoticeMessage(msg.data, errorNotice);
                     if (finishOnError)
                         finish = true;
                     break;
@@ -567,9 +609,13 @@ class PSQLConnection(
                     finish = true;
                     break;
                 case NoticeResponse:
-                    if (msg.data[0] != 0)
-                        logTrace(demarshalString(msg.data[1..$-1]));
-                    continue;
+                    if (noticeCallback !is null)
+                    {
+                        Notice n;
+                        parseNoticeMessage(msg.data, n);
+                        noticeCallback(this, n);
+                    }
+                    break;
                 case NotificationResponse:
                     if (notificationCallback !is null)
                     {
@@ -578,7 +624,7 @@ class PSQLConnection(
                         size_t l;
                         n.channel = demarshalProtocolString(msg.data[4..$], l);
                         n.payload = demarshalString(msg.data[4+l..$-1]);
-                        finish |= notificationCallback(n);
+                        finish |= notificationCallback(this, n);
                     }
                     break;
                 default:
@@ -588,7 +634,7 @@ class PSQLConnection(
         }
 
         if (error)
-            throw new PsqlErrorResponseException(eMsg);
+            throw new PsqlErrorResponseException(errorNotice);
         if (intError)
             throw new PsqlClientException(intErrMsg);
     }
@@ -653,6 +699,11 @@ protected:
                     else
                         return true;
                 }
+                else if (msg.type == BackendMessageType.BackendKeyData)
+                {
+                    m_processId = demarshalNumber(msg.data[0..4]);
+                    m_cancellationKey = demarshalNumber(msg.data[4..8]);
+                }
                 return false;
             }, true);
 
@@ -683,6 +734,11 @@ protected:
         pollMessages((Message msg, ref bool e, ref string eMsg) {
                 if (msg.type == BackendMessageType.Authentication)
                     authRes = demarshalNumber(msg.data[0..4]);
+                else if (msg.type == BackendMessageType.BackendKeyData)
+                {
+                    m_processId = demarshalNumber(msg.data[0..4]);
+                    m_cancellationKey = demarshalNumber(msg.data[4..8]);
+                }
                 return false;
             });
         enforce!PsqlClientException(authRes == 0,
@@ -720,52 +776,86 @@ protected:
         logTrace("MD5 Password message buffered");
     }
 
-    final void handleErrorMessage(ubyte[] data, ref string msg)
+    final void parseNoticeMessage(ubyte[] data, ref Notice n)
     {
-        void copyTillZero()
+        void copyTillZero(ref string dest)
         {
-            //logTrace("copyTillZero " ~ data.to!string);
-            int idx = 0;
-            while (data[idx])
-            {
-                msg ~= cast(char)data[idx];
-                idx++;
-            }
-            //logTrace("idx %d", idx);
-            data = data[idx+1..$];
+            size_t length;
+            dest = demarshalProtocolString(data, length);
+            data = data[length..$];
         }
 
         void discardTillZero()
         {
-            //logTrace("discardTillZero " ~ data.to!string);
-            if (!data.length)
-                return;
-            int idx = 0;
-            while (idx < data.length)
-                if (data[idx])
-                    idx++;
-                else
-                    break;
+            size_t idx = 0;
+            while (idx < data.length && data[idx])
+                idx++;
             data = data[idx+1..$];
-            //logTrace("discardTillZero2 " ~ data.to!string);
         }
 
-        // would be nice to handle:
-        // https://www.postgresql.org/docs/9.5/static/errcodes-appendix.html
-        while (data.length > 0)
+        while (data.length > 1)
         {
-            //logTrace("data = " ~ (cast(string)data).to!string);
             char fieldType = cast(char) data[0];
             data = data[1..$];
+            // https://www.postgresql.org/docs/current/static/protocol-error-fields.html
             switch (fieldType)
             {
                 case 'S':
-                    copyTillZero();
-                    msg ~= " ";
+                    copyTillZero(n.severity);
+                    break;
+                case 'V':
+                    copyTillZero(n.severityV);
+                    break;
+                case 'C':
+                    enforce!PsqlClientException(data.length >= 6,
+                        "Expected 5 bytes of SQLSTATE code.");
+                    n.code[] = cast(char[]) data[0..5];
+                    data = data[6..$];
                     break;
                 case 'M':
-                    copyTillZero();
-                    msg ~= " ";
+                    copyTillZero(n.message);
+                    break;
+                case 'D':
+                    copyTillZero(n.detail);
+                    break;
+                case 'H':
+                    copyTillZero(n.hint);
+                    break;
+                case 'P':
+                    copyTillZero(n.position);
+                    break;
+                case 'p':
+                    copyTillZero(n.internalPos);
+                    break;
+                case 'q':
+                    copyTillZero(n.internalQuery);
+                    break;
+                case 'W':
+                    copyTillZero(n.where);
+                    break;
+                case 's':
+                    copyTillZero(n.schema);
+                    break;
+                case 't':
+                    copyTillZero(n.table);
+                    break;
+                case 'c':
+                    copyTillZero(n.column);
+                    break;
+                case 'd':
+                    copyTillZero(n.dataType);
+                    break;
+                case 'n':
+                    copyTillZero(n.constraint);
+                    break;
+                case 'F':
+                    copyTillZero(n.file);
+                    break;
+                case 'L':
+                    copyTillZero(n.line);
+                    break;
+                case 'R':
+                    copyTillZero(n.routine);
                     break;
                 default:
                     discardTillZero();

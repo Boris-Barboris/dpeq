@@ -10,6 +10,7 @@ import dpeq;
 
 import std.array: join, array;
 import std.conv: to;
+import std.exception: assumeWontThrow;
 import std.typecons: Nullable, scoped;
 import std.meta;
 import std.stdio;
@@ -168,6 +169,11 @@ void main()
     // other tests:
     transactionExample();
     notifyExample();
+    exceptionExample();
+    cancellationExample();
+
+    // please keep this test the last one, so I can run most tests without Unix
+    // sockets available.
     version(Posix) unixSocketExample();
 }
 
@@ -197,7 +203,7 @@ void transactionExample()
             con.putFlushMessage();
             con.flush();
         }
-        Thread.sleep(seconds(2));   // sleep in order to demonstrate row locking
+        Thread.sleep(msecs(500));   // sleep in order to demonstrate row locking
         // we now update all (there is only one) row
         {
             // unnamed prepared statement
@@ -219,7 +225,7 @@ void transactionExample()
 
     void threadFunc2()
     {
-        Thread.sleep(msecs(500));   // let first thread aquire lock
+        Thread.sleep(msecs(250));   // let first thread aquire lock
         auto con = new ConT(
             BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
             "r00tme", "dpeqtestdb"));
@@ -275,15 +281,16 @@ void transactionExample()
 
 
 
-/// example wich demonstrates PSQL notify
+/// example wich demonstrates PSQL notify messages.
 void notifyExample()
 {
     void threadFunc1()
     {
-        auto con = new ConT(
+        ConT con = new ConT(
             BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
             "r00tme", "dpeqtestdb"));
-        Thread.sleep(msecs(500));   // make sure second thread has connected
+        // make sure second thread had time to connect and LISTEN our channel
+        Thread.sleep(msecs(250));
         con.postSimpleQuery("NOTIFY chan1, 'Payload1337';");
         con.flush();
         con.pollMessages(null);
@@ -292,17 +299,18 @@ void notifyExample()
 
     void threadFunc2()
     {
-        auto con = new ConT(
+        ConT con = new ConT(
             BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
             "r00tme", "dpeqtestdb"));
         Notification inbox;
-        con.notificationCallback = (Notification n) { inbox = n; return true; };
+        con.notificationCallback = (ConT c, Notification n) { inbox = n; return true; };
         con.postSimpleQuery("LISTEN chan1;");
         con.flush();
         con.pollMessages(null);
         // blocks for approx half a second
         con.pollMessages(null);
         con.terminate();
+        writeln("Received notification ", inbox);
         assert(inbox.channel == "chan1");
         assert(inbox.payload == "Payload1337");
     }
@@ -314,6 +322,61 @@ void notifyExample()
     thread2.join();
 }
 
+
+
+void exceptionExample()
+{
+    ConT con = new ConT(
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+        "r00tme", "dpeqtestdb"));
+    con.postSimpleQuery("SELECT * from nonexisting_table;");
+    con.flush();
+    try
+    {
+        con.pollMessages(null);
+        assert(0, "Should have thrown at this point");
+    }
+    catch (PsqlErrorResponseException e)
+    {
+        writeln("Received ErrorResponse: ", e.notice);
+        /* Prints:
+        Received ErrorResponse: Notice("ERROR", "ERROR", "42P01", "relation
+        \"nonexisting_table\" does not exist", "", "", "15", "", "", "", "",
+        "", "", "", "", "parse_relation.c", "1160", "parserOpenTable")
+        */
+    }
+    con.terminate();
+}
+
+
+
+void cancellationExample()
+{
+    ConT con = new ConT(
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+        "r00tme", "dpeqtestdb"));
+    writeln("cancellation data: ", con.processId, ", ", con.cancellationKey);
+    con.postSimpleQuery("SELECT pg_sleep(0.5);");
+    con.flush();
+    Thread.sleep(msecs(50));
+    writeln("cancelling request");
+    con.cancelRequest();
+    try
+    {
+        con.pollMessages(null);
+        assert(0, "Should have thrown at this point");
+    }
+    catch (PsqlErrorResponseException e)
+    {
+        writeln("Received ErrorResponse: ", e.notice);
+        /* Prints:
+        Received ErrorResponse: Notice("ERROR", "ERROR", "57014", "canceling
+        statement due to user request", "", "", "", "", "", "", "", "", "", "",
+        "", "postgres.c", "2988", "ProcessInterrupts")
+        */
+    }
+    con.terminate();
+}
 
 
 version(Posix)

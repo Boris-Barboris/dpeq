@@ -78,7 +78,8 @@ enum StaticPgTypes: ObjectID
 
 alias PgType = StaticPgTypes;
 
-/// returns postgress-compatible name of the type
+/// Returns postgress-compatible name of the type. Throws if type OID is
+/// unknown.
 string pgTypeName(ObjectID pgt)
 {
     import std.conv: to;

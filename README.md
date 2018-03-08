@@ -12,10 +12,10 @@ binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
 help you to understand the nature of the messages being passed:   
+https://www.pgcon.org/2014/schedule/attachments/330_postgres-for-the-wire.pdf   
 https://www.postgresql.org/docs/9.5/static/protocol.html   
 https://www.postgresql.org/docs/9.5/static/protocol-flow.html   
 https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html   
-https://www.pgcon.org/2014/schedule/attachments/330_postgres-for-the-wire.pdf   
 
 Many thanks to authors of https://github.com/pszturmaj/ddb and
 https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
@@ -700,7 +700,8 @@ void notifyExample()
         // thread. Poll exits since we return true in notificationCallback.
         con.pollMessages(null);
         con.terminate();
-        // we have received the correct data
+        writeln("Received notification ", inbox);
+        // prints: Received notification Notification(4242, "chan1", "Payload1337")
         assert(inbox.channel == "chan1");
         assert(inbox.payload == "Payload1337");
     }
@@ -710,5 +711,79 @@ void notifyExample()
 
     thread1.join();
     thread2.join();
+}
+```
+### Exception structure
+```D
+void exceptionExample()
+{
+    ConT con = new ConT(
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+        "r00tme", "dpeqtestdb"));
+    con.postSimpleQuery("SELECT * from nonexisting_table;");
+    con.flush();
+    try
+    {
+        con.pollMessages(null);
+        assert(0, "Should have thrown at this point");
+    }
+    catch (PsqlErrorResponseException e)
+    {
+        writeln("Received ErrorResponse: ", e.notice);
+        /* Prints:
+        Received ErrorResponse: Notice("ERROR", "ERROR", "42P01", "relation
+        \"nonexisting_table\" does not exist", "", "", "15", "", "", "", "",
+        "", "", "", "", "parse_relation.c", "1160", "parserOpenTable")
+        */
+    }
+    con.terminate();
+}
+```
+### Long request cancellation
+```D
+void cancellationExample()
+{
+    ConT con = new ConT(
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+        "r00tme", "dpeqtestdb"));
+    writeln("cancellation data: ", con.processId, ", ", con.cancellationKey);
+    con.postSimpleQuery("SELECT pg_sleep(0.5);");
+    con.flush();
+    Thread.sleep(msecs(50));
+    writeln("cancelling request");
+    con.cancelRequest();
+    try
+    {
+        con.pollMessages(null);
+        assert(0, "Should have thrown at this point");
+    }
+    catch (PsqlErrorResponseException e)
+    {
+        writeln("Received ErrorResponse: ", e.notice);
+        /* Prints:
+        Received ErrorResponse: Notice("ERROR", "ERROR", "57014", "canceling
+        statement due to user request", "", "", "", "", "", "", "", "", "", "",
+        "", "postgres.c", "2988", "ProcessInterrupts")
+        */
+    }
+    // connection is still valid here
+    con.terminate();
+}
+```
+### Unix sockets
+```D
+void unixSocketExample()
+{
+    // Default BackendParams.host is set to
+    // "/var/run/postgresql/.s.PGSQL.5432"
+    auto con = new ConT(BackendParams());
+    con.postSimpleQuery("select version();");
+    con.flush();
+    auto res = con.getQueryResults();
+    auto firstRow = blockToVariants(res.blocks[0])[0];
+    writeln("psql version: ", firstRow.front);
+    // prints:
+    // psql version: PostgreSQL 9.5.10 on x86_64-pc-linux-gnu, compiled by 
+    // gcc (Ubuntu 4.8.4-2ubuntu1~14.04.3) 4.8.4, 64-bit
 }
 ```
