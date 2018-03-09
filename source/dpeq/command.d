@@ -1,5 +1,6 @@
 /**
-Commands of various nature.
+Commands of various nature. Prepared statement, portal and response demarshalling
+functions live here.
 
 Copyright: Copyright Boris-Barboris 2017.
 License: MIT
@@ -317,13 +318,16 @@ class Portal(ConnT)
 
     /** Send Describe+Execute command.
     If describe is false, no RowDescription message will be requested
-    from PSQL - useful for optimistic statically-typed querying. */
-    final void execute(bool describe = true)
+    from PSQL - useful for optimistic statically-typed querying.
+    'maxRows' parameter is responsible for portal suspending and is
+    conceptually inferior to simple TCP backpressure mechanisms or result set
+    size limiting. */
+    final void execute(bool describe = true, int maxRows = 0)
     {
         assert(bindRequested, "Portal was never bound");
         if (describe)
             conn.putDescribeMessage(StmtOrPortal.Portal, portalName);
-        conn.putExecuteMessage(portalName);
+        conn.putExecuteMessage(portalName, maxRows);
     }
 }
 

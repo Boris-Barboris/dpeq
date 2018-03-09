@@ -167,7 +167,10 @@ struct RowBlock
     /** Set when the server has sent PortalSuspended due to reaching nonzero
     result-row count limit, requested in Execute message. The appearance of
     this message tells the frontend that another Execute should be issued
-    against the same portal to complete the operation. */
+    against the same portal to complete the operation. Keep in mind, that all
+    portals are destroyed at the end of transaction, wich means that you
+    should not carelessly send Sync message before receiving CommandComplete
+    when you use portal suspension functionality. */
     bool suspended;
 }
 
