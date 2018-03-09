@@ -297,7 +297,7 @@ void main()
     but this is not required for the unnamed statement."
     */
     auto ps = new PreparedStatement!ConT(con, insertCommand(),
-        testTableSpec.length, null, false);
+        testTableSpec.length, false, null);
 
     /*
     Portals represent parameter values, bound to particular prepared statement.

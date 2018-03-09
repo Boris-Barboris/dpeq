@@ -47,7 +47,8 @@ template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
         // as parameter formatCode.
         enum formatCode = Pre!field.formatCode;
 
-        // demarshaller must accept all formatCodes that make sence for this type.
+        // demarshaller should accept all formatCodes that make sense for this
+        // type, and it must throw in unhandled case.
         alias demarshal = Pre!field.demarshal;
 
         // marshaller only needs to support one formatCode, mentioned above
@@ -156,7 +157,7 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Marsh = DefaultFieldMarshaller)
 ///////////////////////////////////////////////////////////////////////////
 */
 
-pragma(inline)
+pragma(inline, true)
 int marshalNull(ubyte[] to)
 {
     return -1;  // special case, -1 length is null value in eq protocol.
@@ -248,21 +249,21 @@ bool to(T: bool)(in string s)
         return true;
     if (s == "f")
         return false;
-    throw new PsqlClientException("Unable to unmarshal bool from string " ~ s);
+    throw new PsqlMarshallingException("Unable to unmarshal bool from string " ~ s);
 }
 
 T demarshalFixedField(T)(const(ubyte)[] from, in FormatCode fCode, in int len)
 {
-    enforce!PsqlClientException(len > 0, "zero-sized fixed non-nullable field");
+    enforce!PsqlMarshallingException(len > 0, "zero-sized fixed non-nullable field");
     if (fCode == FormatCode.Binary)
     {
-        enforce!PsqlClientException(len == T.sizeof, "Field size mismatch");
+        enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch");
         return bigEndianToNative!T(from[0 .. T.sizeof]);
     }
     else if (fCode == FormatCode.Text)
         return demarshalString(from[0 .. len]).to!T;
     else
-        throw new PsqlClientException("Unsupported FormatCode");
+        throw new PsqlMarshallingException("Unsupported FormatCode");
 }
 
 Nullable!T demarshalNullableFixedField(T)
@@ -272,21 +273,21 @@ Nullable!T demarshalNullableFixedField(T)
         return Nullable!T.init;
     if (fCode == FormatCode.Binary)
     {
-        enforce!PsqlClientException(len == T.sizeof, "Field size mismatch, " ~
+        enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch, " ~
             T.stringof ~ ", actual = " ~ len.to!string);
         return Nullable!T(bigEndianToNative!T(from[0 .. T.sizeof]));
     }
     else if (fCode == FormatCode.Text)
         return Nullable!T(demarshalString(from[0 .. len]).to!T);
     else
-        throw new PsqlClientException("Unsupported FormatCode");
+        throw new PsqlMarshallingException("Unsupported FormatCode");
 }
 
 string demarshalStringField(Dummy = void)
     (const(ubyte)[] from, in FormatCode fc, in int len)
 {
     assert(fc == FormatCode.Text, "binary string?");
-    enforce!PsqlClientException(len >= 0, "null string in non-nullable demarshaller");
+    enforce!PsqlMarshallingException(len >= 0, "null string in non-nullable demarshaller");
     if (len == 0)
         return "";
     string res = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
@@ -320,7 +321,7 @@ string demarshalProtocolString(const(ubyte)[] from, ref size_t length)
     {
         l++;
         if (l >= from.length)
-            throw new PsqlClientException("Null-terminated string is not " ~
+            throw new PsqlMarshallingException("Null-terminated string is not " ~
                 "null-terminated");
     }
     length = l + 1;
@@ -340,10 +341,10 @@ Nullable!UUID demarshalNullableUuidField(Dummy = void)
 UUID demarshalUuidField(Dummy = void)
 (const(ubyte)[] from, in FormatCode fc, in int len)
 {
-    enforce!PsqlClientException(len > 0, "null uuid in non-nullable demarshaller");
+    enforce!PsqlMarshallingException(len > 0, "null uuid in non-nullable demarshaller");
     if (fc == FormatCode.Binary)
     {
-        enforce!PsqlClientException(len == 16, "uuid is not 16-byte");
+        enforce!PsqlMarshallingException(len == 16, "uuid is not 16-byte");
         ubyte[16] data;
         for (int i = 0; i < 16; i++)
             data[i] = from[i];
@@ -355,7 +356,7 @@ UUID demarshalUuidField(Dummy = void)
         return UUID(val);
     }
     else
-        throw new PsqlClientException("Unsupported FormatCode");
+        throw new PsqlMarshallingException("Unsupported FormatCode");
 }
 
 
@@ -439,7 +440,7 @@ class VariantConverter(alias Marsh = DefaultFieldMarshaller)
             if (fc == FormatCode.Text)
                 return demarshallers[StaticPgTypes.VARCHAR](fieldBody, fc, len);
             else
-                throw new PsqlClientException(
+                throw new PsqlMarshallingException(
                     "Unable to deduce demarshaller for binary format of a type " ~
                     type.to!string);
         }

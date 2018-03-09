@@ -9,7 +9,7 @@ Authors: Boris-Barboris
 module dpeq.constants;
 
 
-/// Unique identifier of a Psql object. Mostly used to identify a type in dpeq.
+/// oid. Unique identifier of a Psql object. Mostly used to identify a type in dpeq.
 alias ObjectID = int;
 
 /// Format of a marshalled value.

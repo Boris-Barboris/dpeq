@@ -36,6 +36,11 @@ class PsqlClientException: Exception
     mixin ExceptionConstructors;
 }
 
+class PsqlMarshallingException: PsqlClientException
+{
+    mixin ExceptionConstructors;
+}
+
 class PsqlConnectionClosedException: PsqlSocketException
 {
     mixin ExceptionConstructors;

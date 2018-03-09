@@ -37,7 +37,7 @@ Simple query always returns data in FormatCode.Text format.
 Simple queries SHOULD NOT be accompanied by SYNC message, they
 trigger ReadyForQuery message anyways.
 
-Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults
+Every postSimpleQuery or PSQLConnection.sync should be accompanied by getQueryResults
 call. */
 void postSimpleQuery(ConnT)(ConnT conn, string query)
 {
@@ -45,7 +45,7 @@ void postSimpleQuery(ConnT)(ConnT conn, string query)
 }
 
 
-/// Pre-parsed paramethrized command.
+/// Pre-parsed sql query with variable parameters.
 class PreparedStatement(ConnT)
 {
     protected
@@ -67,9 +67,6 @@ class PreparedStatement(ConnT)
     Creates prepared statement object, wich holds dpeq utility state.
     Constructor does not write anything to connection write buffer.
 
-    persist flag is true when you want named prepared statement. Name will
-    be automatically generated.
-
     Quoting https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html:
 
     The number of parameter data types specified (can be zero). Note that this is not an
@@ -82,10 +79,11 @@ class PreparedStatement(ConnT)
         Specifies the object ID of the parameter data type. Placing a zero here is
         equivalent to leaving the type unspecified.
 
-    That means you can leave paramTypes null.
+    That means you can leave paramTypes null, unless you're doing some tricky
+    stuff.
     */
-    this(ConnT conn, string query, short paramCount,
-        const(ObjectID)[] paramTypes = null, bool persist = true)
+    this(ConnT conn, string query, short paramCount, bool named = false,
+        const(ObjectID)[] paramTypes = null)
     {
         assert(conn);
         assert(query);
@@ -94,45 +92,32 @@ class PreparedStatement(ConnT)
         this.query = query;
         this.paramTypes = paramTypes;
         this.m_paramCount = paramCount;
-        if (persist)
+        if (named)
             parsedName = conn.getNewPreparedName();
         else
             parsedName = "";
     }
 
-    /// Simplified constructor for unnamed prepared statement with no
-    /// parameter types specified.
-    this(ConnT conn, string query, short paramCount)
-    {
-        assert(conn);
-        assert(query);
-        assert(paramCount >= 0);
-        this.conn = conn;
-        this.query = query;
-        this.paramTypes = null;
-        this.m_paramCount = paramCount;
-        parsedName = "";
-    }
-
-    /// you're not supposed to reparse persistent Prepared statement (it will break
-    /// existing portals), it's better to just create a new one. That's why
-    /// this class does not provide any methods to reparse
+    /// write Parse message into connection's write buffer.
     final void postParseMessage()
     {
         conn.putParseMessage(parsedName, query, paramTypes[]);
         parseRequested = true;
     }
 
+    /// ditto
     alias parse = postParseMessage;
 
-    /// explicit close for persistent prepared statements
+    /** Post message to destroy named prepared statement.
+
+    An unnamed prepared statement lasts only until the next Parse
+    statement specifying the unnamed statement as destination is issued.
+    (Note that a simple Query message also destroys the unnamed statement.)
+    */
     final void postCloseMessage()
     {
-        assert(parseRequested);
+        assert(parseRequested, "prepared statement was never sent to backend");
         assert(parsedName.length, "no need to close unnamed prepared statements");
-        /** An unnamed prepared statement lasts only until the next Parse
-        statement specifying the unnamed statement as destination is issued.
-        (Note that a simple Query message also destroys the unnamed statement.) */
         conn.putCloseMessage(StmtOrPortal.Statement, parsedName);
         parseRequested = false;
     }
@@ -155,12 +140,12 @@ class PreparedStatement(ConnT)
             return false;
         }
         conn.pollMessages(&interceptor, true);
-        enforce!PsqlClientException(parsed, "Parse failed");
+        enforce!PsqlClientException(parsed, "Parse was not confirmed");
     }
 }
 
 
-/// Instance of set of parameters bound to prepared statement
+/// Parameter tuple, bound to prepared statement
 class Portal(ConnT)
 {
     protected
@@ -183,7 +168,7 @@ class Portal(ConnT)
     }
 
     /// bind empty, parameterless portal. resCodes are requested format codes
-    /// of resulting columns.
+    /// of resulting columns, keep it null to request everything in text format.
     final void bind(FormatCode[] resCodes = null)
     {
         assert(prepStmt.paramCount == 0);
@@ -198,9 +183,16 @@ class Portal(ConnT)
         bindRequested = true;
     }
 
+    /**
+    For the 'specs' array of prepared statement parameters types, known at
+    compile-time, write Bind message to connection's write buffer from the
+    representation of 'args' parameters, marshalled to 'specs' types according
+    to 'Marshaller' template. Format codes of the response columns is set
+    via 'resCodes' array, known at compile time.
+    */
     final void bind(
             FieldSpec[] specs,
-            FormatCode[] resCodes,
+            FormatCode[] resCodes = null,
             alias Marshaller = DefaultFieldMarshaller,
             Args...)
         (in Args args)
@@ -213,8 +205,6 @@ class Portal(ConnT)
 
         if (bindRequested && portalName.length)
             postCloseMessage();
-
-        // TODO: if possible, verify spec against parameter types of prepStmt
 
         enum fcodesr = [staticMap!(FCodeOfFSpec!(Marshaller).F, aliasSeqOf!specs)];
 
@@ -230,11 +220,12 @@ class Portal(ConnT)
         bindRequested = true;
     }
 
-    /// This version of bind accept generic InputRanges of format codes and
-    /// field marshallers and passes them directly to putBindMessage method of
-    /// connection object. No parameter count and type validation is performed.
-    /// If this portal is already bound and is a named one, Close message is
-    /// posted.
+    /** This version of bind accept generic InputRanges of format codes and
+    field marshallers and passes them directly to putBindMessage method of
+    connection object. No parameter count and type validation is performed.
+    If this portal is already bound and is a named one, Close message is
+    posted.
+    */
     final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
         scope RR returnCodeRange)
     {
@@ -248,7 +239,7 @@ class Portal(ConnT)
     }
 
     /// Simple portal bind, wich binds all parameters as strings and requests
-    /// all result columns in text format code
+    /// all result columns in text format.
     final void bind(scope Nullable!(string)[] args)
     {
         assert(prepStmt.paramCount == args.length);
@@ -259,11 +250,7 @@ class Portal(ConnT)
         static struct StrMarshaller
         {
             Nullable!string str;
-
-            this(Nullable!string v)
-            {
-                str = v;
-            }
+            this(Nullable!string v) { str = v; }
 
             int opCall(ubyte[] buf)
             {
@@ -285,22 +272,24 @@ class Portal(ConnT)
 
         conn.putBindMessage!(FormatCode[], MarshRange, FormatCode[])(
             portalName, prepStmt.parsedName, null, MarshRange(args), null);
+        bindRequested = true;
     }
 
-    /// explicit close for persistent prepared statements
+    /** Write Close message to connection write buffer in order to
+    explicitly destroy named portal.
+
+    If successfully created, a named portal object lasts till the end of the
+    current transaction, unless explicitly destroyed. An unnamed portal is
+    destroyed at the end of the transaction, or as soon as the next Bind
+    statement specifying the unnamed portal as destination is issued.
+    (Note that a simple Query message also destroys the unnamed portal.)
+    Named portals must be explicitly closed before they can be redefined
+    by another Bind message, but this is not required for the unnamed portal.
+    */
     final void postCloseMessage()
     {
-        assert(bindRequested);
+        assert(bindRequested, "portal was never bound");
         assert(portalName.length, "no need to close unnamed portals");
-        /**
-        If successfully created, a named portal object lasts till the end of the
-        current transaction, unless explicitly destroyed. An unnamed portal is
-        destroyed at the end of the transaction, or as soon as the next Bind
-        statement specifying the unnamed portal as destination is issued.
-        (Note that a simple Query message also destroys the unnamed portal.)
-        Named portals must be explicitly closed before they can be redefined
-        by another Bind message, but this is not required for the unnamed portal.
-        */
         conn.putCloseMessage(StmtOrPortal.Portal, portalName);
         bindRequested = false;
     }
@@ -323,7 +312,7 @@ class Portal(ConnT)
             return false;
         }
         conn.pollMessages(&interceptor, true);
-        enforce!PsqlClientException(is_bound, "Bind failed");
+        enforce!PsqlClientException(is_bound, "Bind was not confirmed");
     }
 
     /** Send Describe+Execute command.
@@ -331,7 +320,7 @@ class Portal(ConnT)
     from PSQL - useful for optimistic statically-typed querying. */
     final void execute(bool describe = true)
     {
-        assert(bindRequested);
+        assert(bindRequested, "Portal was never bound");
         if (describe)
             conn.putDescribeMessage(StmtOrPortal.Portal, portalName);
         conn.putExecuteMessage(portalName);
@@ -340,38 +329,16 @@ class Portal(ConnT)
 
 
 /*
-/////////////////////////////////////
-// Functions to get query results
-/////////////////////////////////////
+////////////////////////////////////////
+// Functions to work with query results
+////////////////////////////////////////
 */
 
-/// Generic query result, returned by getQueryResults
-struct QueryResult
-{
-    /// Number of CommandComplete or EmptyQueryResponse messages received.
-    short commandsComplete;
 
-    /// Data blocks, each block being an array of rows sharing one row
-    /// description (schema). Each sql statement in simple query protocol
-    /// creates one block. Each portal execution in EQ protocol creates
-    /// one block.
-    RowBlock[] blocks;
-
-    /// returns true if there is not a single data row in the response.
-    @property bool noDataRows() const
-    {
-        foreach (block; blocks)
-            if (block.dataRows.length > 0)
-                return false;
-        return true;
-    }
-}
-
-
-/// Generic method, suitable for both simple and prepared queries.
-/// Polls messages from connection object and builds QueryResult structure from
-/// the messages. Throws if something goes wrong. Polling stops when
-/// ReadyForQuery message is received.
+/** Generic result materializer, suitable for both simple and prepared queries.
+Polls messages from the connection and builds QueryResult structure from
+them. Throws if something goes wrong. Polling stops when ReadyForQuery message
+is received. */
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;
@@ -399,12 +366,12 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 newBlockAwaited = true;
                 break;
             case PortalSuspended:
-                err = true;
-                errMsg = "Dpeq cannot handle suspended portals, " ~
-                    "do not limit row count in Execute message.";
+                res.commandsComplete++;
+                newBlockAwaited = true;
+                res.blocks[$-1].suspended = true;
                 break;
             case RowDescription:
-                // RowDescription always starts new row block
+                // RowDescription always precedes new row block data
                 if (newBlockAwaited)
                 {
                     RowBlock rb;
@@ -415,7 +382,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 else
                 {
                     err = true;
-                    errMsg = "Unexpected RowDescription not in the start of " ~
+                    errMsg = "Unexpected RowDescription in the middle of " ~
                         "row block";
                 }
                 break;
@@ -425,7 +392,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                     if (requireRowDescription)
                     {
                         err = true;
-                        errMsg ~= "Got row without row description ";
+                        errMsg ~= "Got row without row description. ";
                     }
                     res.blocks ~= RowBlock();
                     newBlockAwaited = false;
@@ -445,7 +412,8 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
 
 /// Poll messages from the connection until CommandComplete or EmptyQueryResponse
 /// is received, and return one row block (result of one and only one query).
-RowBlock getOneRowBlock(ConnT)(ConnT conn, bool requireRowDescription = false)
+RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
+    bool requireRowDescription = false)
 {
     RowBlock result;
 
@@ -460,10 +428,8 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, bool requireRowDescription = false)
             case CommandComplete:
                 return true;
             case PortalSuspended:
-                err = true;
-                errMsg = "Dpeq cannot handle suspended portals, " ~
-                    "do not limit row count in Execute message.";
-                break;
+                result.suspended = true;
+                return true;
             case RowDescription:
                 result.rowDesc = dpeq.schema.RowDescription(msg.data);
                 requireRowDescription = false;
@@ -472,10 +438,17 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, bool requireRowDescription = false)
                 if (requireRowDescription)
                 {
                     err = true;
-                    errMsg ~= "Got row without row description ";
+                    errMsg ~= "Missing required RowDescription. ";
                     break;
                 }
                 result.dataRows ~= msg;
+                if (rowCountLimit != 0)
+                {
+                    // client code requested early stop
+                    rowCountLimit--;
+                    if (rowCountLimit == 0)
+                        return true;
+                }
                 break;
             default:
                 break;
@@ -491,24 +464,24 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, bool requireRowDescription = false)
 
 /*
 /////////////////////////////////////////////////////////////////
-// Functions used to transform query results to native data types
+// Functions used to transform query results into D types
 /////////////////////////////////////////////////////////////////
 */
 
 //import std.stdio;
 
-/// Returns RandomAccessRange of InputRanges of lazy-demarshalled variants.
-/// Specific flavor of Variant is derived from Converter.demarshal call return type.
-/// Look into marshalling.VariantConverter for demarshal implementation examples.
-/// Will append parsed field descriptions to fieldDescs array if passed.
+/** Returns RandomAccessRange of InputRanges of lazy-demarshalled variants.
+Specific flavor of Variant is derived from Converter.demarshal call return type.
+Look into marshalling.VariantConverter for demarshal implementation examples.
+Will append parsed field descriptions to fieldDescs array if passed. */
 auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
     (RowBlock block, FieldDescription[]* fieldDescs = null)
 {
     alias VariantT = ReturnType!(Converter.demarshal);
 
-    enforce!PsqlClientException(block.rowDesc.isSet,
+    enforce!PsqlMarshallingException(block.rowDesc.isSet,
         "Cannot demarshal RowBlock without row description. " ~
-        "Did you send describe message?");
+        "Did you send Describe message?");
     short totalColumns = block.rowDesc.fieldCount;
     ObjectID[] typeArr = new ObjectID[totalColumns];
     FormatCode[] fcArr = new FormatCode[totalColumns];
@@ -538,7 +511,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
         // front() call.
         VariantT res;
     public:
-        @property bool empty() { return column >= totalCols; }
+        @property bool empty() const { return column >= totalCols; }
         void popFront()
         {
             parsed = false;
@@ -613,6 +586,7 @@ template TupleForSpec(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshal
                 aliasSeqOf!spec));
 }
 
+/// Template function Func returns D type wich corresponds to FieldSpec.
 template SpecMapper(alias Demarshaller)
 {
     template Func(FieldSpec spec)
@@ -620,26 +594,26 @@ template SpecMapper(alias Demarshaller)
         static if (is(Demarshaller!spec.type))
             alias Func = Demarshaller!spec.type;
         else
-            static assert(0, "Demarshaller doesn't support typeId " ~
+            static assert(0, "Demarshaller doesn't support type with oid " ~
                 spec.typeId.to!string);
     }
 }
 
 
-/// Returns RandomAccessRange of lazy-demarshalled tuples.
-/// Customazable with Demarshaller template.
-/// Will append parsed field descriptions to fieldDescs array if passed.
+/** Returns RandomAccessRange of lazily-demarshalled tuples.
+Customazable with Demarshaller template. Will append parsed field descriptions
+to fieldDescs array if it is provided. */
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (RowBlock block, FieldDescription[]* fieldDescs = null)
 {
     alias ResTuple = TupleForSpec!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
-    enforce!PsqlClientException(block.rowDesc.isSet,
+    enforce!PsqlMarshallingException(block.rowDesc.isSet,
         "Cannot demarshal RowBlock without row description. " ~
         "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
-    enforce!PsqlClientException(totalColumns == spec.length,
+    enforce!PsqlMarshallingException(totalColumns == spec.length,
         "Expected %d columnts in a row, got %d".format(spec.length, totalColumns));
     FormatCode[] fcArr = new FormatCode[totalColumns];
 
@@ -652,7 +626,7 @@ auto blockToTuples
             (*fieldDescs)[i] = fdesc;
         fcArr[i] = fdesc.formatCode;
         ObjectID colType = fdesc.type;
-        enforce!PsqlClientException(colType == spec[i].typeId,
+        enforce!PsqlMarshallingException(colType == spec[i].typeId,
             "Colunm %d type mismatch: expected %d, got %d".format(
                 i, spec[i].typeId, colType));
         i++;
@@ -674,7 +648,7 @@ auto blockToTuples
             res[i] = Demarshaller!(colSpec).demarshal(vbuf, fcodes[i], len);
             from = from[max(4, len + 4) .. $];
         }
-        enforce!PsqlClientException(from.length == 0,
+        enforce!PsqlMarshallingException(from.length == 0,
             "%d bytes left in supposedly emptied row".format(from.length));
         return res;
     }
@@ -723,9 +697,9 @@ class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
 }
 
 
-/// Returns RandomAccessRange of lazy-demarshalled tuples.
-/// Customazable with Demarshaller template.
-/// This version does not require RowDescription, but cannot validate rows that good.
+/** Returns RandomAccessRange of lazy-demarshalled tuples. Customazable with
+Demarshaller template. This version does not require RowDescription, but cannot
+validate row types reliably. */
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
     (Message[] data)
@@ -750,7 +724,7 @@ auto blockToTuples
             res[i] = Demarshaller!(colSpec).demarshal(vbuf, fcode, len);
             from = from[max(4, len + 4) .. $];
         }
-        enforce!PsqlClientException(from.length == 0,
+        enforce!PsqlMarshallingException(from.length == 0,
             "%d bytes left in supposedly emptied row".format(from.length));
         return res;
     }

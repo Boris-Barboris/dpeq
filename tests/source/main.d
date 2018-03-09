@@ -97,7 +97,7 @@ void main()
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
     createTestSchema(con);
     auto ps = new PreparedStatement!ConT(con, insertCommand(),
-        testTableSpec.length, null, false);
+        testTableSpec.length, false, null);
     auto portal = new Portal!ConT(ps, false);
     ps.postParseMessage();
 
@@ -191,7 +191,7 @@ void transactionExample()
         {
             // unnamed prepared statement
             auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test FOR UPDATE;", cast(short) 0);
+                "SELECT * FROM dpeq_test FOR UPDATE;", short(0));
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);
@@ -208,7 +208,7 @@ void transactionExample()
         {
             // unnamed prepared statement
             auto ps = scoped!(PreparedStatement!ConT)(con,
-                "UPDATE dpeq_test SET col0 = 't';", cast(short) 0);
+                "UPDATE dpeq_test SET col0 = 't';", short(0));
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);
@@ -234,7 +234,7 @@ void transactionExample()
         {
             // unnamed prepared statement
             auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test;", cast(short) 0);
+                "SELECT * FROM dpeq_test;", short(0));
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);
@@ -252,7 +252,7 @@ void transactionExample()
         {
             // unnamed prepared statement
             auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test FOR UPDATE;", cast(short) 0);
+                "SELECT * FROM dpeq_test FOR UPDATE;", short(0));
             ps.parse();
             // unnamed portal
             auto pt = scoped!(Portal!ConT)(ps, false);

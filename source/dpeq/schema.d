@@ -1,5 +1,5 @@
 /**
-Structures that describe a schema of query results.
+Structures that describe the schema of query results.
 
 Copyright: Copyright Boris-Barboris 2017.
 License: MIT
@@ -151,10 +151,10 @@ struct RowDescription
 }
 
 
-/// Array of rows, returned by the server, wich all share one row
-/// description. Simple queries may include multiple SQL statements, each
-/// corresponding to row block. In extended query protocol flow, row block
-/// is retuned for each "Execute" message.
+/** Array of rows, returned by the server, wich all share one row
+description. Simple queries may include multiple SQL statements, each
+corresponding to row block. In extended query protocol flow, row block
+is retuned for each "Execute" message. */
 struct RowBlock
 {
     RowDescription rowDesc;
@@ -163,6 +163,35 @@ struct RowBlock
     /// set when the server responded with EmptyQueryResponse to sql query
     /// this row block represents.
     bool emptyQuery;
+
+    /** Set when the server has sent PortalSuspended due to reaching nonzero
+    result-row count limit, requested in Execute message. The appearance of
+    this message tells the frontend that another Execute should be issued
+    against the same portal to complete the operation. */
+    bool suspended;
+}
+
+
+/// Generic query result, returned by getQueryResults
+struct QueryResult
+{
+    /// Number of CommandComplete\EmptyQueryResponse\PortalSuspended messages received.
+    short commandsComplete;
+
+    /// Data blocks, each block being an array of rows sharing one row
+    /// description (schema). Each sql statement in simple query protocol
+    /// creates one block. Each portal execution in EQ protocol creates
+    /// one block.
+    RowBlock[] blocks;
+
+    /// returns true if there is not a single data row in the response.
+    @property bool noDataRows() const
+    {
+        foreach (block; blocks)
+            if (block.dataRows.length > 0)
+                return false;
+        return true;
+    }
 }
 
 

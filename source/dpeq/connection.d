@@ -143,6 +143,12 @@ class PSQLConnection(
         int bufHead = 0;
         bool open = false;
 
+        // we allocate RAM for responses in batches to reduce GC pressure.
+        // 2048 is the last small-sized dling in gc:
+        // https://github.com/dlang/druntime/blob/v2.079.0/src/gc/impl/conservative/gc.d#L1251
+        immutable int readBatchSize = 2048;
+        ubyte[] readBatch;
+
         // number of expected readyForQuery responses
         int readyForQueryExpected = 0;
 
@@ -967,7 +973,16 @@ protected:
         ubyte[] data;
         if (length > 0)
         {
-            data = new ubyte[length];
+            if (length <= readBatchSize / 2)
+            {
+                // we should batch the allocation
+                if (readBatch.length < length)
+                    readBatch = new ubyte[readBatchSize];
+                data = readBatch[0..length];
+                readBatch = readBatch[length..$];
+            }
+            else
+                data = new ubyte[length];
             read(data);
         }
         res.data = data;
