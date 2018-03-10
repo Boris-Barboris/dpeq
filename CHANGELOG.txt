@@ -1,3 +1,31 @@
+10.03.2018:  v0.2.0 -> v0.3.0
+    Breaking changes:
+    - mark most methods final.
+    - change parameter order in PreparedStatement constructor to better reflect
+        common cases.
+    - struct QueryResult moved to dpeq.schema file.
+    - removed delayedPoll functionality. Pushdown automaton is now on the
+        client code.
+    - most lazy parameters changed to in\const.
+
+    Functionality:
+    - convenience Portal.bind for parameterless case.
+    - convenience all-text Portal.bind overload for nullable-string-only parameters.
+    - detection of suspended portals.
+    - getOneRowBlock function, wich polls connection until all rows from one
+        Execute have been materialized (or row limit reached).
+    - PsqlMarshallingException as PsqlClientException derivative for marshalling
+        errors.
+    - Unix-domain socket support for stock StdSocket.
+    - allocation batching for small response messages.
+    - transaction status exposed as transactionStatus property of connection.
+    - query cancellation mechanism (cancelRequest method of connection object).
+    - putBindMessage overload for parameterless portals.
+    - notificationCallback wich implements receivement of PSQL "notify" message passing.
+    - noticeCallback to observe backend notices.
+    - proper NoticeResponse\ErrorResponse demarshalling. Notice member included in
+        ErrorResponseException.
+
 13.01.2018:  v0.1.1 -> v0.2.0
     Breaking changes:
     - blockToVariants return type changed to NullableVariant - dpeq-defined subtype of std.variant.Variant
