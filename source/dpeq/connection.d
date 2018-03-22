@@ -806,13 +806,11 @@ protected:
     Message readOneMessage() @trusted
     {
         Message res;
-        ubyte[1] type;
-        read(type);
-        res.type = cast(BackendMessageType) type[0];
+        ubyte[5] type_and_length;
+        read(type_and_length);
+        res.type = cast(BackendMessageType) type_and_length[0];
         logTrace("Got message of type %s", res.type.to!string);
-        ubyte[4] length_arr;
-        read(length_arr);
-        int length = demarshalNumber(cast(immutable(ubyte)[]) length_arr) - 4;
+        int length = demarshalNumber(cast(immutable(ubyte)[]) type_and_length[1..$]) - 4;
         enforce!PsqlClientException(length >= 0, "Negative message length");
         ubyte[] data;
         if (length > 0)

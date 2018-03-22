@@ -77,6 +77,7 @@ enum StaticPgTypes: OID
     JSONB = 3802
 }
 
+/// ditto...
 alias PgType = StaticPgTypes;
 
 /// Returns postgress-compatible name of the type. Throws if type OID is
