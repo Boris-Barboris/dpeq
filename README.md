@@ -418,6 +418,11 @@ void main()
     // allocate RAM for reponse and return it's raw representation
     auto res = con.getQueryResults();
     assert(res.blocks.length == 1);
+    // first row set in the result was fully received and was terminated by
+    // CommandComplete message.
+    assert(res.blocks[0].state == RowBlockState.complete);
+    // Command tag string is a member of row block. 1 row was inserted.
+    assert(res.blocks[0].commandTag == "INSERT 0 1");
     // ...
 }
 ```
