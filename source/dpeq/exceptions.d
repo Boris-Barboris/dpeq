@@ -8,7 +8,7 @@ Authors: Boris-Barboris
 
 module dpeq.exceptions;
 
-import dpeq.schema: Notice;
+import dpeq.result: Notice;
 
 
 /// mixes in standard exception constructors that call super correctly

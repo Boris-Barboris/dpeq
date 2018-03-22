@@ -14,81 +14,12 @@ import std.exception: enforce;
 import std.conv: to;
 import std.traits;
 import std.range;
-import std.socket;
 
 import dpeq.constants;
 import dpeq.exceptions;
 import dpeq.marshalling;
-import dpeq.schema: Notification, Notice;
-
-
-
-/**
-$(D std.socket.Socket) wrapper wich is compatible with PSQLConnection.
-If you want to use custom socket type (vibe-d or any other), make it
-duck-type and exception-compatible with this one.
-*/
-final class StdSocket
-{
-    private Socket m_socket;
-
-    /// Underlying socket instance.
-    @property Socket socket() { return m_socket; }
-
-    /// Establish connection to backend. Constructor is expected to throw Exception
-    /// if anything goes wrong.
-    this(string host, ushort port)
-    {
-        if (host[0] == '/')
-        {
-            // Unix socket
-            version(Posix)
-            {
-                Address addr = new UnixAddress(host);
-                m_socket = new Socket(AddressFamily.UNIX, SocketType.STREAM);
-                m_socket.connect(addr);
-            }
-            else
-                assert(0, "Cannot connect using UNIX sockets on non-Posix OS");
-        }
-        else
-        {
-            m_socket = new TcpSocket();
-            // 20 minutes for both tcp_keepalive_time and tcp_keepalive_intvl
-            m_socket.setKeepAlive(1200, 1200);
-            // example of receive timeout:
-            // m_socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, seconds(120));
-            m_socket.connect(new InternetAddress(host, port));
-        }
-    }
-
-    void close() nothrow @nogc
-    {
-        m_socket.shutdown(SocketShutdown.BOTH);
-        m_socket.close();
-    }
-
-    /// Send whole byte buffer or throw. Throws: $(D PsqlSocketException).
-    auto send(const(ubyte)[] buf)
-    {
-        auto r = m_socket.send(buf);
-        if (r == Socket.ERROR)
-            throw new PsqlSocketException("Socket.ERROR on send");
-        return r;
-    }
-
-    /// Fill byte buffer from the socket completely or throw.
-    /// Throws: $(D PsqlSocketException).
-    auto receive(ubyte[] buf)
-    {
-        auto r = m_socket.receive(buf);
-        if (r == 0 && buf.length > 0)
-            throw new PsqlSocketException("Connection closed");
-        if (r == Socket.ERROR)
-            throw new PsqlSocketException("Socket.ERROR on receive: " ~ m_socket.getErrorText());
-        return r;
-    }
-}
+import dpeq.result;
+import dpeq.socket;
 
 
 
@@ -103,16 +34,6 @@ struct BackendParams
     string database = "postgres";
 }
 
-
-/// Message, received from backend.
-struct Message
-{
-    BackendMessageType type;
-    /// Raw unprocessed message byte array excluding message type byte and
-    /// first 4 bytes that represent message body length.
-    ubyte[] data;
-}
-
 enum StmtOrPortal: char
 {
     Statement = 'S',
@@ -120,7 +41,7 @@ enum StmtOrPortal: char
 }
 
 // When the client code is uninterested in dpeq connection logging.
-private pragma(inline, true) void nop_logger(T...)(T vals) {}
+private pragma(inline, true) void nop_logger(T...)(T vals) nothrow @safe pure {}
 
 /**
 Connection object.
@@ -151,8 +72,9 @@ class PSQLConnection(
 
         // number of expected readyForQuery responses
         int readyForQueryExpected = 0;
+        int unflushedRfq = 0;
 
-        TransactionStatus tstatus = TransactionStatus.IDLE;
+        TransactionStatus tstatus;
 
         /// counters to generate unique prepared statement and portal ids
         int preparedCounter = 0;
@@ -166,47 +88,48 @@ class PSQLConnection(
     }
 
     /// Backend parameters this connection was constructed from
-    final @property ref const(BackendParams) backendParams() const
+    final @property ref const(BackendParams) backendParams() const pure @safe
     {
         return m_backendParams;
     }
 
     /// Backend process ID. Used in CancelRequest message.
-    final @property int processId() const { return m_processId; }
+    final @property int processId() const pure @safe { return m_processId; }
 
     /// Cancellation secret. Used in CancelRequest message.
-    final @property int cancellationKey() const { return m_cancellationKey; }
+    final @property int cancellationKey() const pure @safe { return m_cancellationKey; }
 
     /// Socket getter.
-    final @property SocketT socket() { return m_socket; }
+    final @property SocketT socket() pure @safe { return m_socket; }
 
     /// Number of ReadyForQuery messages that are yet to be received
     /// from the backend. May be useful for checking wether getQueryResults
     /// would block forever.
-    final @property int expectedRFQCount() const { return readyForQueryExpected; }
+    final @property int expectedRFQCount() const pure @safe { return readyForQueryExpected; }
 
     /// Transaction status, reported by the last received ReadyForQuery message.
     /// For a new connection TransactionStatus.IDLE is returned.
-    final @property TransactionStatus transactionStatus() const { return tstatus; }
+    final @property TransactionStatus transactionStatus() const pure @safe { return tstatus; }
 
     invariant
     {
         assert(readyForQueryExpected >= 0);
+        assert(unflushedRfq >= 0);
         assert(bufHead >= 0);
     }
 
     /// Connection is open when it is authorized and socket was alive last time
     /// it was checked.
-    final @property bool isOpen() const { return open; }
+    final @property bool isOpen() const pure @safe { return open; }
 
     /// Generate next connection-unique prepared statement name.
-    final string getNewPreparedName()
+    final string getNewPreparedName() pure @safe
     {
         return (preparedCounter++).to!string;
     }
 
     /// Generate next connection-unique portal name.
-    final string getNewPortalName()
+    final string getNewPortalName() pure @safe
     {
         return (portalCounter++).to!string;
     }
@@ -214,10 +137,10 @@ class PSQLConnection(
     /// Allocate reuired memory, build socket and authorize the connection.
     /// Throws: $(D PsqlSocketException) if transport failed, or
     /// $(D PsqlClientException) if authorization failed for some reason.
-    this(const BackendParams bp)
+    this(const BackendParams bp, size_t writeBufSize = 2 * 4096) @safe
     {
         m_backendParams = bp;
-        writeBuffer.length = 2 * 4096; // liberal procurement of two pages
+        writeBuffer.length = writeBufSize;
         try
         {
             logTrace("Trying to open TCP connection to PSQL");
@@ -234,7 +157,7 @@ class PSQLConnection(
     }
 
     /// Notify backend and close socket.
-    void terminate()
+    void terminate() nothrow @safe
     {
         open = false;
         try
@@ -251,9 +174,9 @@ class PSQLConnection(
 
     /**
     Open new socket and connect it to the same backend as this connection is
-    bound to, send CancelRequest and close socket.
+    bound to, send CancelRequest and close the temporary socket.
     */
-    void cancelRequest()
+    void cancelRequest() @safe
     {
         SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port);
         ubyte[4 * 4] intBuf;
@@ -267,7 +190,7 @@ class PSQLConnection(
 
     /// Flush writeBuffer into the socket. Blocks/yields (according to socket
     /// implementation).
-    final void flush()
+    final void flush() @safe
     {
         try
         {
@@ -286,34 +209,41 @@ class PSQLConnection(
         finally
         {
             bufHead = 0;
+            readyForQueryExpected += unflushedRfq;
+            unflushedRfq = 0;
         }
     }
 
     /// discard write buffer content
-    final void discard()
+    final void discard() pure @safe
     {
         bufHead = 0;
+        unflushedRfq = 0;
     }
 
     /// Save write buffer cursor in order to be able to restore it in case of errors.
     /// Use it to prevent sending junk to backend when something goes wrong during
     /// marshalling or message creation.
-    final auto saveBuffer()
+    final auto saveBuffer() pure @safe
     {
         static struct WriteCursor
         {
-            int offset;
+            private int savedHead;
+            private int savedUnflushedRfq;
             PSQLConnection conn;
-            void restore()
+            void restore() @safe
             {
-                conn.bufHead = offset;
+                assert(conn.bufHead >= savedHead);
+                conn.bufHead = savedHead;
+                assert(conn.unflushedRfq >= savedUnflushedRfq);
+                conn.unflushedRfq = savedUnflushedRfq;
             }
         }
-        return WriteCursor(bufHead, this);
+        return WriteCursor(bufHead, unflushedRfq, this);
     }
 
     pragma(inline)
-    final void ensureOpen()
+    final void ensureOpen() const pure @safe
     {
         enforce!PsqlConnectionClosedException(open, "Connection is not open");
     }
@@ -358,7 +288,7 @@ class PSQLConnection(
     */
     final void putBindMessage(FR, PR, RR)
         (string portal, string prepared, scope FR formatCodes, scope PR parameters,
-        scope RR resultFormatCodes)
+        scope RR resultFormatCodes) pure @safe
     //if (isInputRange!FR && is(Unqual!(ElementType!FR) == FormatCode) &&
     //    isInputRange!RR && is(Unqual!(ElementType!RR) == FormatCode) &&
     //    isInputRange!PR && __traits(compiles, -1 == parameters.front()(new ubyte[2]))
@@ -410,7 +340,7 @@ class PSQLConnection(
 
     /// putBindMessage overload for parameterless portals
     final void putBindMessage(RR)
-        (string portal, string prepared, scope RR resultFormatCodes)
+        (string portal, string prepared, scope RR resultFormatCodes) pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Bind);
@@ -446,7 +376,7 @@ class PSQLConnection(
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    final void putCloseMessage(StmtOrPortal closeWhat, string name)
+    final void putCloseMessage(StmtOrPortal closeWhat, string name) pure @safe
     {
         ensureOpen();
         assert(closeWhat == 'S' || closeWhat == 'P');
@@ -461,7 +391,7 @@ class PSQLConnection(
     /// put Close message into write buffer.
     /// `closeWhat` is 'S' for prepared statement and
     /// 'P' for portal.
-    final void putDescribeMessage(StmtOrPortal descWhat, string name)
+    final void putDescribeMessage(StmtOrPortal descWhat, string name) pure @safe
     {
         ensureOpen();
         assert(descWhat == 'S' || descWhat == 'P');
@@ -476,7 +406,7 @@ class PSQLConnection(
     /**
     non-zero maxRows will generate PortalSuspended messages, wich are
     currently not handled by dpeq commands */
-    final void putExecuteMessage(string portal = "", int maxRows = 0)
+    final void putExecuteMessage(string portal = "", int maxRows = 0) pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Execute);
@@ -496,7 +426,7 @@ class PSQLConnection(
     commands. Without Flush, messages returned by the backend will be combined
     into the minimum possible number of packets to minimize network overhead."
     */
-    final void putFlushMessage()
+    final void putFlushMessage() pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Flush);
@@ -504,8 +434,8 @@ class PSQLConnection(
         logTrace("Flush message buffered");
     }
 
-    final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
-        if (isInputRange!PR && is(Unqual!(ElementType!PR) == ObjectID))
+    final void putParseMessage(PR)(string prepared, string query, scope PR ptypes) pure @safe
+        if (isInputRange!PR && is(Unqual!(ElementType!PR) == OID))
     {
         logTrace("Message to parse query: %s", query);
 
@@ -518,9 +448,9 @@ class PSQLConnection(
         // parameter types
         short pcount = 0;
         auto pcountPrefix = reserveLen!short();
-        foreach (ObjectID ptype; ptypes)
+        foreach (OID ptype; ptypes)
         {
-            write(cast(int)ptype);
+            write(ptype);
             pcount++;
         }
         pcountPrefix.write(pcount);
@@ -530,14 +460,14 @@ class PSQLConnection(
     }
 
     /// put Query message (simple query protocol) into the write buffer
-    final void putQueryMessage(string query)
+    final void putQueryMessage(string query) pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Query);
         auto lenTotal = reserveLen();
         cwrite(query);
         lenTotal.fill();
-        readyForQueryExpected++;
+        unflushedRfq++;
         logTrace("Query message buffered");
     }
 
@@ -547,12 +477,12 @@ class PSQLConnection(
     Put Sync message into write buffer. Usually you should call this after
     every portal execute message.
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
-    final void putSyncMessage()
+    final void putSyncMessage() pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Sync);
         write(4);
-        readyForQueryExpected++;
+        unflushedRfq++;
         logTrace("Sync message buffered");
     }
 
@@ -561,18 +491,18 @@ class PSQLConnection(
     /// NotificationResponse messages will be parsed and passed to this
     /// callback during 'pollMessages' call.
     /// https://www.postgresql.org/docs/9.5/static/sql-notify.html
-    bool delegate(typeof(this) con, Notification n) nothrow notificationCallback = null;
+    bool delegate(typeof(this) con, Notification n) nothrow @safe notificationCallback = null;
 
     /// NoticeResponse messages will be parsed and
     /// passed to this callback during 'pollMessages' call.
-    void delegate(typeof(this) con, Notice n) nothrow noticeCallback = null;
+    void delegate(typeof(this) con, Notice n) nothrow @safe noticeCallback = null;
 
     /** When this callback returns true, pollMessages will exit it's loop.
     Interceptor should set err to true if it has encountered some kind of error
     and wants it to be rethrown as PsqlClientException at the end of
     pollMessages call. errMsg should be appended with error description. */
     alias InterceptorT = bool delegate(Message msg, ref bool err,
-        ref string errMsg) nothrow;
+        ref string errMsg) @safe nothrow;
 
     /** Read messages from the socket in loop until:
       1). if finishOnError is set and ErrorResponse is received, function
@@ -584,7 +514,7 @@ class PSQLConnection(
     not ReadyForQuery, ErrorResponse or Notice\Notification, it is passed to
     interceptor. It may set bool 'err' flag to true and append to 'errMsg'
     string, if delayed throw is required. */
-    final void pollMessages(scope InterceptorT interceptor, bool finishOnError = false)
+    final void pollMessages(scope InterceptorT interceptor, bool finishOnError = false) @safe
     {
         bool finish = false;
         bool error = false;
@@ -647,7 +577,7 @@ class PSQLConnection(
 
     /// reads and discards messages from socket until all expected
     /// ReadyForQuery messages are received
-    void windupResponseStack()
+    void windupResponseStack() @safe
     {
         while (readyForQueryExpected > 0)
         {
@@ -661,7 +591,7 @@ class PSQLConnection(
     // client code directly. If you need them, inherit them.
 protected:
 
-    final void putStartupMessage(in BackendParams params)
+    final void putStartupMessage(in BackendParams params) pure @safe
     {
         auto lenPrefix = reserveLen();
         write(0x0003_0000);  // protocol v3
@@ -674,14 +604,15 @@ protected:
         logTrace("Startup message buffered");
     }
 
-    final void putTerminateMessage()
+    final void putTerminateMessage() pure @safe
     {
+        ensureOpen();
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
         logTrace("Terminate message buffered");
     }
 
-    final void initialize(in BackendParams params)
+    void initialize(in BackendParams params) @safe
     {
         putStartupMessage(params);
         flush();
@@ -751,17 +682,17 @@ protected:
             "Expected AuthenticationOk message was not received");
     }
 
-    final void putPasswordMessage(string pw)
+    final void putPasswordMessage(string pw) pure @safe
     {
         write(cast(ubyte)FrontMessageType.PasswordMessage);
         auto lenPrefix = reserveLen();
         cwrite(pw);
         lenPrefix.fill();
-        readyForQueryExpected++;
+        unflushedRfq++;
         logTrace("Password message buffered");
     }
 
-    final void putMd5PasswordMessage(string pw, string user, ubyte[4] salt)
+    final void putMd5PasswordMessage(string pw, string user, ubyte[4] salt) pure @trusted
     {
         // thank you ddb authors
         char[32] MD5toHex(T...)(in T data)
@@ -778,108 +709,19 @@ protected:
         mdpw[3 .. $] = MD5toHex(MD5toHex(pw, user), salt);
         cwrite(cast(string) mdpw[]);
         lenPrefix.fill();
-        readyForQueryExpected++;
+        unflushedRfq++;
         logTrace("MD5 Password message buffered");
-    }
-
-    final void parseNoticeMessage(ubyte[] data, ref Notice n)
-    {
-        void copyTillZero(ref string dest)
-        {
-            size_t length;
-            dest = demarshalProtocolString(data, length);
-            data = data[length..$];
-        }
-
-        void discardTillZero()
-        {
-            size_t idx = 0;
-            while (idx < data.length && data[idx])
-                idx++;
-            data = data[idx+1..$];
-        }
-
-        while (data.length > 1)
-        {
-            char fieldType = cast(char) data[0];
-            data = data[1..$];
-            // https://www.postgresql.org/docs/current/static/protocol-error-fields.html
-            switch (fieldType)
-            {
-                case 'S':
-                    copyTillZero(n.severity);
-                    break;
-                case 'V':
-                    copyTillZero(n.severityV);
-                    break;
-                case 'C':
-                    enforce!PsqlClientException(data.length >= 6,
-                        "Expected 5 bytes of SQLSTATE code.");
-                    n.code[] = cast(char[]) data[0..5];
-                    data = data[6..$];
-                    break;
-                case 'M':
-                    copyTillZero(n.message);
-                    break;
-                case 'D':
-                    copyTillZero(n.detail);
-                    break;
-                case 'H':
-                    copyTillZero(n.hint);
-                    break;
-                case 'P':
-                    copyTillZero(n.position);
-                    break;
-                case 'p':
-                    copyTillZero(n.internalPos);
-                    break;
-                case 'q':
-                    copyTillZero(n.internalQuery);
-                    break;
-                case 'W':
-                    copyTillZero(n.where);
-                    break;
-                case 's':
-                    copyTillZero(n.schema);
-                    break;
-                case 't':
-                    copyTillZero(n.table);
-                    break;
-                case 'c':
-                    copyTillZero(n.column);
-                    break;
-                case 'd':
-                    copyTillZero(n.dataType);
-                    break;
-                case 'n':
-                    copyTillZero(n.constraint);
-                    break;
-                case 'F':
-                    copyTillZero(n.file);
-                    break;
-                case 'L':
-                    copyTillZero(n.line);
-                    break;
-                case 'R':
-                    copyTillZero(n.routine);
-                    break;
-                default:
-                    discardTillZero();
-            }
-        }
     }
 
     /// Read from socket to buffer buf exactly buf.length bytes.
     /// Blocks and throws.
-    final void read(ubyte[] buf)
+    final void read(ubyte[] buf) @safe
     {
         try
         {
             logTrace("reading %d bytes", buf.length);
-            // TODO: make sure this code is generic enough for all sockets
             auto r = m_socket.receive(buf);
-            assert(r == buf.length);
-            //logTrace("received %d bytes", r);
+            assert(r == buf.length, "received less bytes than requested");
         }
         catch (PsqlSocketException e)
         {
@@ -889,11 +731,13 @@ protected:
     }
 
     /// extends writeBuffer if marshalling functor m is lacking space (returns -2)
-    final int wrappedMarsh(MarshT)(scope MarshT m)
+    final int wrappedMarsh(MarshT)(scope MarshT m) pure @safe
+        if (isCallable!MarshT)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
         while (bcount == -2)
         {
+            // reallocate with additional 4 pages
             writeBuffer.length = writeBuffer.length + 4 * 4096;
             bcount = m(writeBuffer[bufHead .. $]);
         }
@@ -903,7 +747,7 @@ protected:
     }
 
     /// write numeric type T to write buffer
-    final int write(T)(T val)
+    final int write(T)(T val) pure @safe nothrow
         if (isNumeric!T)
     {
         return wrappedMarsh((ubyte[] buf) => marshalFixedField(buf, val));
@@ -911,7 +755,7 @@ protected:
 
     /// Reserve space in write buffer for length prefix and return
     /// struct that automatically fills it from current buffer offset position.
-    final auto reserveLen(T = int)()
+    final auto reserveLen(T = int)() @safe nothrow
         if (isNumeric!T && !isUnsigned!T)
     {
         static struct Len
@@ -920,7 +764,7 @@ protected:
             int idx;    // offset of length prefix word in writeBuffer
 
             /// calculate and write length prefix
-            void fill(bool includeSelf = true)
+            void fill(bool includeSelf = true) pure @safe
             {
                 T len = (con.bufHead - idx).to!T;
                 if (!includeSelf)
@@ -936,7 +780,7 @@ protected:
             }
 
             /// write some specific number
-            void write(T v)
+            void write(T v) nothrow pure @safe
             {
                 auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
                 assert(res == T.sizeof);
@@ -948,18 +792,18 @@ protected:
         return l;
     }
 
-    final int write(string s)
+    final int write(string s) pure @safe
     {
         return wrappedMarsh((ubyte[] buf) => marshalStringField(buf, s));
     }
 
-    final int cwrite(string s)
+    final int cwrite(string s) pure @safe
     {
         return wrappedMarsh((ubyte[] buf) => marshalCstring(buf, s));
     }
 
     /// read exactly one message from the socket
-    final Message readOneMessage()
+    Message readOneMessage() @trusted
     {
         Message res;
         ubyte[1] type;
@@ -968,7 +812,7 @@ protected:
         logTrace("Got message of type %s", res.type.to!string);
         ubyte[4] length_arr;
         read(length_arr);
-        int length = demarshalNumber(length_arr) - 4;
+        int length = demarshalNumber(cast(immutable(ubyte)[]) length_arr) - 4;
         enforce!PsqlClientException(length >= 0, "Negative message length");
         ubyte[] data;
         if (length > 0)
@@ -982,10 +826,10 @@ protected:
                 readBatch = readBatch[length..$];
             }
             else
-                data = new ubyte[length];
+                data = new ubyte[length];   // fat messages get their own buffer
             read(data);
         }
-        res.data = data;
+        res.data = cast(immutable(ubyte)[]) data;
         return res;
     }
 }

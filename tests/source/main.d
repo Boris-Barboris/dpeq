@@ -82,7 +82,8 @@ string insertCommand()
     return res;
 }
 
-alias ConT = PSQLConnection!(StdSocket);
+// uncomment writefln to receive verbose protocol logging
+alias ConT = PSQLConnection!(StdSocket);//, writefln);
 
 void createTestSchema(ConT)(ConT con)
 {
@@ -131,6 +132,8 @@ void main()
     con.flush();
     auto res = con.getQueryResults();
     assert(res.blocks.length == 1);
+    assert(res.blocks[0].state == RowBlockState.complete);
+    assert(res.blocks[0].commandTag == "INSERT 0 1");
 
     FieldDescription[] rowDesc = res.blocks[0].rowDesc[].array;
     writeln("received field descriptions:");

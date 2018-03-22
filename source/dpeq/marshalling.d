@@ -27,12 +27,12 @@ import dpeq.exceptions;
 /// boolean flag wich indicates wether the value can be null.
 struct FieldSpec
 {
-    ObjectID typeId;
+    OID typeId;
     bool nullable;
 }
 
 
-/** Default compile-time one-to-many mapper, wich for ObjectID of some Postgress type
+/** Default compile-time one-to-many mapper, wich for OID of some Postgress type
 * gives it's native type representation, and marshalling and demarshalling
 * functions. You can extend it with two custom mappers: Pre and Post. */
 template DefaultFieldMarshaller(FieldSpec field, alias Pre = NopMarshaller,
@@ -157,73 +157,78 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Marsh = DefaultFieldMarshaller)
 ///////////////////////////////////////////////////////////////////////////
 */
 
-pragma(inline, true)
-int marshalNull(ubyte[] to)
+@safe pure
 {
-    return -1;  // special case, -1 length is null value in eq protocol.
-}
 
-// I don't really know how versatile are these functions, so let's keep
-// them FixedField instead of NumericField
+    pragma(inline, true)
+    int marshalNull(ubyte[] to) nothrow
+    {
+        return -1;  // special case, -1 length is null value in eq protocol.
+    }
 
-int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr)
-{
-    if (ptr.isNull)
-        return marshalNull(to);
-    return marshalFixedField!T(to, ptr.get);
-}
+    // I don't really know how versatile are these functions, so let's keep
+    // them FixedField instead of NumericField
 
-int marshalFixedField(T)(ubyte[] to, in T val)
-{
-    if (T.sizeof > to.length)
-        return -2;
-    auto arr = nativeToBigEndian!T(val);
-    to[0 .. arr.length] = arr;
-    return arr.length;
-}
+    int marshalNullableFixedField(T)(ubyte[] to, in Nullable!T ptr) nothrow
+    {
+        if (ptr.isNull)
+            return marshalNull(to);
+        return marshalFixedField!T(to, ptr.get);
+    }
 
-int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
-{
-    if (val.isNull)
-        return marshalNull(to);
-    return marshalStringField(to, val.get);
-}
+    int marshalFixedField(T)(ubyte[] to, in T val) nothrow
+    {
+        if (T.sizeof > to.length)
+            return -2;
+        auto arr = nativeToBigEndian!T(val);
+        to[0 .. arr.length] = arr;
+        return arr.length;
+    }
 
-int marshalStringField(Dummy = void)(ubyte[] to, in string s)
-{
-    if (s.length > to.length)
-        return -2;
-    for (int i = 0; i < s.length; i++)
-        to[i] = cast(const(ubyte)) s[i];
-    return s.length.to!int;
-}
+    int marshalNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
+    {
+        if (val.isNull)
+            return marshalNull(to);
+        return marshalStringField(to, val.get);
+    }
 
-/// Service function, used for marshalling of protocol messages.
-/// Data strings are passed without trailing nulls.
-int marshalCstring(ubyte[] to, in string s)
-{
-    if (s.length + 1 > to.length)
-        return -2;
-    for (int i = 0; i < s.length; i++)
-        to[i] = cast(const(ubyte)) s[i];
-    to[s.length] = cast(ubyte)0;
-    return (s.length + 1).to!int;
-}
+    int marshalStringField(Dummy = void)(ubyte[] to, in string s)
+    {
+        if (s.length > to.length)
+            return -2;
+        for (int i = 0; i < s.length; i++)
+            to[i] = cast(const(ubyte)) s[i];
+        return s.length.to!int;
+    }
 
-int marshalNullableUuidField(Dummy = void)(ubyte[] to, in Nullable!UUID val)
-{
-    if (val.isNull)
-        return marshalNull(to);
-    return marshalUuidField(to, val.get);
-}
+    /// Service function, used for marshalling of protocol messages.
+    /// Data strings are passed without trailing nulls.
+    int marshalCstring(ubyte[] to, in string s)
+    {
+        if (s.length + 1 > to.length)
+            return -2;
+        for (int i = 0; i < s.length; i++)
+            to[i] = cast(const(ubyte)) s[i];
+        to[s.length] = cast(ubyte)0;
+        return (s.length + 1).to!int;
+    }
 
-int marshalUuidField(Dummy = void)(ubyte[] to, in UUID val)
-{
-    if (to.length < 16)
-        return -2;
-    for (int i = 0; i < 16; i++)
-        to[i] = val.data[i];
-    return 16;
+    int marshalNullableUuidField(Dummy = void)(ubyte[] to, in Nullable!UUID val) nothrow
+    {
+        if (val.isNull)
+            return marshalNull(to);
+        return marshalUuidField(to, val.get);
+    }
+
+    int marshalUuidField(Dummy = void)(ubyte[] to, in UUID val) nothrow
+    {
+        if (to.length < 16)
+            return -2;
+        for (int i = 0; i < 16; i++)
+            to[i] = val.data[i];
+        return 16;
+    }
+
 }
 
 /*
@@ -233,130 +238,133 @@ int marshalUuidField(Dummy = void)(ubyte[] to, in UUID val)
 //////////////////////////////////////////////////////////////////////////////
 */
 
-
-/// Simple demarshal of some numeric type.
-pragma(inline)
-T demarshalNumber(T = int)(const(ubyte)[] from)
-    if (isNumeric!T)
+@safe pure
 {
-    return bigEndianToNative!T(from[0 .. T.sizeof]);
-}
 
-/// psql uses `t` and `f` for boolean
-bool to(T: bool)(in string s)
-{
-    if (s == "t")
-        return true;
-    if (s == "f")
-        return false;
-    throw new PsqlMarshallingException("Unable to unmarshal bool from string " ~ s);
-}
-
-T demarshalFixedField(T)(const(ubyte)[] from, in FormatCode fCode, in int len)
-{
-    enforce!PsqlMarshallingException(len > 0, "zero-sized fixed non-nullable field");
-    if (fCode == FormatCode.Binary)
+    /// Simple demarshal of some numeric type.
+    pragma(inline)
+    T demarshalNumber(T = int)(immutable(ubyte)[] from) nothrow
+        if (isNumeric!T)
     {
-        enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch");
         return bigEndianToNative!T(from[0 .. T.sizeof]);
     }
-    else if (fCode == FormatCode.Text)
-        return demarshalString(from[0 .. len]).to!T;
-    else
-        throw new PsqlMarshallingException("Unsupported FormatCode");
-}
 
-Nullable!T demarshalNullableFixedField(T)
-    (const(ubyte)[] from, in FormatCode fCode, in int len)
-{
-    if (len == -1)
-        return Nullable!T.init;
-    if (fCode == FormatCode.Binary)
+    /// psql uses `t` and `f` for boolean
+    private bool to(T: bool)(in string s)
     {
-        enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch, " ~
-            T.stringof ~ ", actual = " ~ len.to!string);
-        return Nullable!T(bigEndianToNative!T(from[0 .. T.sizeof]));
+        if (s == "t")
+            return true;
+        if (s == "f")
+            return false;
+        throw new PsqlMarshallingException("Unable to unmarshal bool from string " ~ s);
     }
-    else if (fCode == FormatCode.Text)
-        return Nullable!T(demarshalString(from[0 .. len]).to!T);
-    else
-        throw new PsqlMarshallingException("Unsupported FormatCode");
-}
 
-string demarshalStringField(Dummy = void)
-    (const(ubyte)[] from, in FormatCode fc, in int len)
-{
-    assert(fc == FormatCode.Text, "binary string?");
-    enforce!PsqlMarshallingException(len >= 0, "null string in non-nullable demarshaller");
-    if (len == 0)
-        return "";
-    string res = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
-    return res;
-}
-
-/// returns inplace-constructed string without allocations. Hacky.
-Nullable!string demarshalNullableStringField(Dummy = void)
-    (const(ubyte)[] from, in FormatCode fc, in int len)
-{
-    assert(fc == FormatCode.Text, "binary string?");
-    if (len == -1)
-        return Nullable!string.init;
-    if (len == 0)
-        return Nullable!string("");
-    string res = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
-    return Nullable!string(res);
-}
-
-/// dpeq utility function
-string demarshalString(const(ubyte)[] from)
-{
-    return (cast(immutable(char)*)(from.ptr))[0 .. from.length];
-}
-
-/// dpeq utility function. Demarshal zero-terminated string from byte buffer.
-string demarshalProtocolString(const(ubyte)[] from, ref size_t length)
-{
-    size_t l = 0;
-    while (from[l])
+    T demarshalFixedField(T)(immutable(ubyte)[] from, in FormatCode fCode, in int len)
     {
-        l++;
-        if (l >= from.length)
-            throw new PsqlMarshallingException("Null-terminated string is not " ~
-                "null-terminated");
+        enforce!PsqlMarshallingException(len > 0, "zero-sized fixed non-nullable field");
+        if (fCode == FormatCode.Binary)
+        {
+            enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch");
+            return bigEndianToNative!T(from[0 .. T.sizeof]);
+        }
+        else if (fCode == FormatCode.Text)
+            return demarshalString(from[0 .. len]).to!T;
+        else
+            throw new PsqlMarshallingException("Unsupported FormatCode");
     }
-    length = l + 1;
-    if (l == 0)
-        return string.init;
-    return demarshalString(from[0..l]);
-}
 
-Nullable!UUID demarshalNullableUuidField(Dummy = void)
-(const(ubyte)[] from, in FormatCode fc, in int len)
-{
-    if (len == -1)
-        return Nullable!UUID.init;
-    return Nullable!UUID(demarshalUuidField(from, fc, len));
-}
+    Nullable!T demarshalNullableFixedField(T)
+        (immutable(ubyte)[] from, in FormatCode fCode, in int len)
+    {
+        if (len == -1)
+            return Nullable!T.init;
+        if (fCode == FormatCode.Binary)
+        {
+            enforce!PsqlMarshallingException(len == T.sizeof, "Field size mismatch, " ~
+                T.stringof ~ ", actual = " ~ len.to!string);
+            return Nullable!T(bigEndianToNative!T(from[0 .. T.sizeof]));
+        }
+        else if (fCode == FormatCode.Text)
+            return Nullable!T(demarshalString(from[0 .. len]).to!T);
+        else
+            throw new PsqlMarshallingException("Unsupported FormatCode");
+    }
 
-UUID demarshalUuidField(Dummy = void)
-(const(ubyte)[] from, in FormatCode fc, in int len)
-{
-    enforce!PsqlMarshallingException(len > 0, "null uuid in non-nullable demarshaller");
-    if (fc == FormatCode.Binary)
+    string demarshalStringField(Dummy = void)
+        (immutable(ubyte)[] from, in FormatCode fc, in int len)
     {
-        enforce!PsqlMarshallingException(len == 16, "uuid is not 16-byte");
-        ubyte[16] data;
-        for (int i = 0; i < 16; i++)
-            data[i] = from[i];
-        return UUID(data);
+        assert(fc == FormatCode.Text, "binary string?");
+        enforce!PsqlMarshallingException(len >= 0, "null string in non-nullable demarshaller");
+        if (len == 0)
+            return "";
+        return cast(string) from[0 .. len.to!size_t];
     }
-    else if (fc == FormatCode.Text)
+
+    /// returns inplace-constructed string without allocations. Hacky.
+    Nullable!string demarshalNullableStringField(Dummy = void)
+        (immutable(ubyte)[] from, in FormatCode fc, in int len)
     {
-        scope string val = (cast(immutable(char)*)(from.ptr))[0 .. len.to!size_t];
-        return UUID(val);
+        assert(fc == FormatCode.Text, "binary string?");
+        if (len == -1)
+            return Nullable!string.init;
+        if (len == 0)
+            return Nullable!string("");
+        string res = cast(string) from[0 .. len.to!size_t];
+        return Nullable!string(res);
     }
-    else
-        throw new PsqlMarshallingException("Unsupported FormatCode");
+
+    /// dpeq utility function
+    string demarshalString(immutable(ubyte)[] from) nothrow
+    {
+        return cast(string) from[0 .. from.length];
+    }
+
+    /// dpeq utility function. Demarshal zero-terminated string from byte buffer.
+    string demarshalProtocolString(immutable(ubyte)[] from, ref size_t length)
+    {
+        size_t l = 0;
+        while (from[l])
+        {
+            l++;
+            if (l >= from.length)
+                throw new PsqlMarshallingException("Null-terminated string is not " ~
+                    "null-terminated");
+        }
+        length = l + 1;
+        if (l == 0)
+            return string.init;
+        return demarshalString(from[0..l]);
+    }
+
+    Nullable!UUID demarshalNullableUuidField(Dummy = void)
+        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    {
+        if (len == -1)
+            return Nullable!UUID.init;
+        return Nullable!UUID(demarshalUuidField(from, fc, len));
+    }
+
+    UUID demarshalUuidField(Dummy = void)
+        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    {
+        enforce!PsqlMarshallingException(len > 0, "null uuid in non-nullable demarshaller");
+        if (fc == FormatCode.Binary)
+        {
+            enforce!PsqlMarshallingException(len == 16, "uuid is not 16-byte");
+            ubyte[16] data;
+            for (int i = 0; i < 16; i++)
+                data[i] = from[i];
+            return UUID(data);
+        }
+        else if (fc == FormatCode.Text)
+        {
+            string val = cast(string) from[0 .. len.to!size_t];
+            return UUID(val);
+        }
+        else
+            throw new PsqlMarshallingException("Unsupported FormatCode");
+    }
+
 }
 
 
@@ -368,7 +376,7 @@ UUID demarshalUuidField(Dummy = void)
 
 /// prototype of a nullable variant demarshaller, used in converter
 alias VariantDemarshaller =
-    NullableVariant function(const(ubyte)[] buf, in FormatCode fc, in int len);
+    NullableVariant function(immutable(ubyte)[] buf, in FormatCode fc, in int len) @system;
 
 /// std.variant.Variant subtype that is better suited for holding SQL null.
 /// Null NullableVariant is essentially a valueless Variant instance.
@@ -383,9 +391,9 @@ struct NullableVariant
     }
 
     /// this property will be true if psql return null in this column
-    @safe bool isNull() const { return !variant.hasValue; }
+    bool isNull() const pure nothrow @safe { return !variant.hasValue; }
 
-    string toString()
+    string toString() @system
     {
         if (isNull)
             // may conflict with "null" string, but this can be said about any string
@@ -393,9 +401,24 @@ struct NullableVariant
         else
             return variant.toString();
     }
+
+    NullableVariant opAssign(typeof(null) n) @system
+    {
+        variant = Variant();
+        return this;
+    }
 }
 
-NullableVariant wrapToVariant(alias f)(const(ubyte)[] buf, in FormatCode fc, in int len)
+unittest
+{
+    NullableVariant nv = NullableVariant("asd");
+    assert(!nv.isNull);
+    nv = null;
+    assert(nv.isNull);
+}
+
+NullableVariant wrapToVariant(alias f)
+    (immutable(ubyte)[] buf, in FormatCode fc, in int len) @system
 {
     auto nullableResult = f(buf, fc, len);
     if (nullableResult.isNull)
@@ -407,13 +430,13 @@ NullableVariant wrapToVariant(alias f)(const(ubyte)[] buf, in FormatCode fc, in 
 /// Default converter hash map. You can extend it, or define your own.
 class VariantConverter(alias Marsh = DefaultFieldMarshaller)
 {
-    static immutable VariantDemarshaller[ObjectID] demarshallers;
+    static immutable VariantDemarshaller[OID] demarshallers;
 
     @disable private this();
 
     shared static this()
     {
-        VariantDemarshaller[ObjectID] aa;
+        VariantDemarshaller[OID] aa;
         // iterate over StaticPgTypes and take demarshallers from StaticFieldMarshaller
         foreach (em; __traits(allMembers, StaticPgTypes))
         {
@@ -425,11 +448,11 @@ class VariantConverter(alias Marsh = DefaultFieldMarshaller)
                 StaticFieldMarshaller!spec.type, " in hash table");*/
             aa[spec.typeId] = &wrapToVariant!(Marsh!spec.demarshal);
         }
-        demarshallers = cast(immutable VariantDemarshaller[ObjectID]) aa;
+        demarshallers = cast(immutable VariantDemarshaller[OID]) aa;
     }
 
     static NullableVariant demarshal(
-        const(ubyte)[] fieldBody, ObjectID type, FormatCode fc, int len)
+        immutable(ubyte)[] fieldBody, OID type, FormatCode fc, int len) @system
     {
         immutable(VariantDemarshaller)* func = type in demarshallers;
         if (func)

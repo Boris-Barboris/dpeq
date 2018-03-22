@@ -10,7 +10,8 @@ module dpeq.constants;
 
 
 /// oid. Unique identifier of a Psql object. Mostly used to identify a type in dpeq.
-alias ObjectID = int;
+alias OID = int;
+alias ObjectID = OID;
 
 /// Format of a marshalled value.
 enum FormatCode: short
@@ -21,7 +22,7 @@ enum FormatCode: short
 
 /** Small portion of statically known ids of Psql types, wich is enough
 * to start connection and request full type list. */
-enum StaticPgTypes: ObjectID
+enum StaticPgTypes: OID
 {
     NULL = 0,
     BOOLEAN = 16,
@@ -80,7 +81,7 @@ alias PgType = StaticPgTypes;
 
 /// Returns postgress-compatible name of the type. Throws if type OID is
 /// unknown.
-string pgTypeName(ObjectID pgt)
+string pgTypeName(OID pgt)
 {
     import std.conv: to;
     StaticPgTypes spgt = pgt.to!StaticPgTypes;
@@ -144,8 +145,8 @@ enum BackendMessageType: char
 transaction status. */
 enum TransactionStatus: char
 {
-    IDLE = 'I',     /// idle (not in transaction block)
-    TBLOCK = 'T',   /// in transaction block
+    idle = 'I',     /// idle (not in transaction block)
+    inside = 'T',   /// inside transaction block
     /// in failed transaction block (queries will be rejected until block is ended)
-    FAILEDBLOCK = 'E'
+    failed = 'E'
 }

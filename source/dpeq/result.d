@@ -1,12 +1,12 @@
 /**
-Structures that describe the schema of query results.
+Structures that describe query results and notifications, received from backend.
 
 Copyright: Copyright Boris-Barboris 2017.
 License: MIT
 Authors: Boris-Barboris
 */
 
-module dpeq.schema;
+module dpeq.result;
 
 import std.exception: enforce;
 import std.conv: to;
@@ -20,11 +20,22 @@ import dpeq.constants;
 import dpeq.marshalling;
 
 
+/// Message, received from backend.
+struct Message
+{
+    BackendMessageType type;
+    /// Raw unprocessed message byte array excluding message type byte and
+    /// first 4 bytes that represent message body length.
+    immutable(ubyte)[] data;
+}
+
 
 /// Lazily-demarshalled field (column) description
 struct FieldDescription
 {
-    @property string name()
+    @safe pure:
+
+    @property string name() const
     {
         // from c-string to d-string, no allocation
         return demarshalString(m_buf[0..nameLength-1]);
@@ -32,34 +43,34 @@ struct FieldDescription
 
     /// If the field can be identified as a column of a specific table,
     /// the object ID of the table; otherwise zero.
-    @property ObjectID table()
+    @property OID table() const
     {
         return demarshalNumber(m_buf[nameLength .. nameLength + 4]);
     }
 
     /// If the field can be identified as a column of a specific table,
     /// the attribute number of the column; otherwise zero.
-    @property short columnId()
+    @property short columnId() const
     {
         return demarshalNumber!short(m_buf[nameLength + 4 .. nameLength + 6]);
     }
 
     /// The object ID of the field's data type.
-    @property ObjectID type()
+    @property OID type() const
     {
         return demarshalNumber(m_buf[nameLength + 6 .. nameLength + 10]);
     }
 
     /// The data type size (see pg_type.typlen).
     /// Note that negative values denote variable-width types.
-    @property short typeLen()
+    @property short typeLen() const
     {
         return demarshalNumber!short(m_buf[nameLength + 10 .. nameLength + 12]);
     }
 
     /// The type modifier (see pg_attribute.atttypmod).
     /// The meaning of the modifier is type-specific.
-    @property int typeModifier()
+    @property int typeModifier() const
     {
         return demarshalNumber(m_buf[nameLength + 12 .. nameLength + 16]);
     }
@@ -67,25 +78,25 @@ struct FieldDescription
     /// The format code being used for the field. Currently will be zero (text)
     /// or one (binary). In a RowDescription returned from the statement variant
     /// of Describe, the format code is not yet known and will always be zero.
-    @property FormatCode formatCode()
+    @property FormatCode formatCode() const
     {
         return cast(FormatCode)
             demarshalNumber!short(m_buf[nameLength + 16 .. nameLength + 18]);
     }
 
     /// backing buffer, owned by Message
-    const(ubyte)[] m_buf;
+    immutable(ubyte)[] m_buf;
 
     /// length of name C-string wich spans the head of backing buffer
     private int nameLength;
 
-    static FieldDescription demarshal(const(ubyte)[] buf, out int bytesDiscarded)
+    static FieldDescription demarshal(immutable(ubyte)[] buf, out int bytesDiscarded)
     {
         int bytesRead = 0;
         while (buf[bytesRead])  // name is C-string, so it ends with zero
             bytesRead++;
         int nameLength = bytesRead + 1;
-        bytesDiscarded = (nameLength + 2 * ObjectID.sizeof + 2 * short.sizeof +
+        bytesDiscarded = (nameLength + 2 * OID.sizeof + 2 * short.sizeof +
             int.sizeof + FormatCode.sizeof).to!int;
         return FieldDescription(buf[0 .. bytesDiscarded], nameLength);
     }
@@ -94,26 +105,30 @@ struct FieldDescription
 
 struct RowDescription
 {
+    @safe pure:
+
     /// number of fields (columns) in a row
-    @property short fieldCount()
+    @property short fieldCount() const
     {
         return demarshalNumber!short(m_buf[0 .. 2]);
     }
 
     /// buffer owned by Message
-    const(ubyte)[] m_buf;
+    immutable(ubyte)[] m_buf;
 
     /// true when row description of this row block was received
     @property bool isSet() const { return m_buf !is null; }
 
-    /// Slice operator, wich returns InputRange of lazily-demarshalled FieldDescriptions.
-    auto opIndex()
+    /// Slice operator, wich returns ForwardRange of FieldDescriptions.
+    auto opIndex() const
     {
+        assert(isSet(), "RowDescription is not set");
+
         static struct FieldDescrRange
         {
-            private const(ubyte)[] buf;
+            private immutable(ubyte)[] buf;
 
-            this(const(ubyte)[] backing)
+            this(immutable(ubyte)[] backing)
             {
                 buf = backing;
             }
@@ -142,53 +157,78 @@ struct RowDescription
             {
                 frontDemarshalled = false;
             }
+
+            FieldDescrRange save() const
+            {
+                return this;
+            }
         }
 
-        static assert (isInputRange!FieldDescrRange);
+        static assert (isForwardRange!FieldDescrRange);
 
         return FieldDescrRange(m_buf[2..$]);
     }
 }
 
 
-/** Array of rows, returned by the server, wich all share one row
-description. Simple queries may include multiple SQL statements, each
-corresponding to row block. In extended query protocol flow, row block
-is retuned for each "Execute" message. */
-struct RowBlock
+/// Row block data rows are in one of these states
+enum RowBlockState: byte
 {
-    RowDescription rowDesc;
-    Message[] dataRows;
-
-    /// set when the server responded with EmptyQueryResponse to sql query
-    /// this row block represents.
-    bool emptyQuery;
-
-    /** Set when the server has sent PortalSuspended due to reaching nonzero
+    invalid = 0,    /// Default state, wich means it was never set.
+    complete,       /// Last data row was succeeded with CommandComplete.
+    emptyQuery,     /// EmptyQueryResponse was issued from backend.
+    /** Happens when the server has sent PortalSuspended due to reaching nonzero
     result-row count limit, requested in Execute message. The appearance of
     this message tells the frontend that another Execute should be issued
     against the same portal to complete the operation. Keep in mind, that all
     portals are destroyed at the end of transaction, wich means that you
     should not carelessly send Sync message before receiving CommandComplete
-    when you use portal suspension functionality. */
-    bool suspended;
+    when you use portal suspension functionality and implicit transaction scope
+    (no explicit BEGIN\COMMIT). */
+    suspended,
+    /** Polling stopped early on the client side, for example 'getOneRowBlock'
+    stopped because of rowCountLimit. */
+    incomplete
+}
+
+
+/** Array of rows, returned by the server, wich all share one row
+description. Simple queries may include multiple SQL statements, each
+returning a row block. In extended query protocol flow, row block
+is retuned for each "Execute" message. */
+struct RowBlock
+{
+    RowDescription rowDesc;
+    Message[] dataRows;
+    RowBlockState state;
+
+    /**
+    The command tag. Present when CommandComplete was received.
+    This is usually a single word that identifies which SQL command was completed.
+    For an INSERT command, the tag is INSERT oid rows, where rows is the number of rows inserted.
+        oid is the object ID of the inserted row if rows is 1 and the target table
+        has OIDs; otherwise oid is 0.
+    For a DELETE command, the tag is DELETE rows where rows is the number of rows deleted.
+    For an UPDATE command, the tag is UPDATE rows where rows is the number of rows updated.
+    For a SELECT or CREATE TABLE AS command, the tag is SELECT rows where rows is the number of rows retrieved.
+    For a MOVE command, the tag is MOVE rows where rows is the number of rows the cursor's position has been changed by.
+    For a FETCH command, the tag is FETCH rows where rows is the number of rows that have been retrieved from the cursor.
+    For a COPY command, the tag is COPY rows where rows is the number of rows copied. (Note:
+        the row count appears only in PostgreSQL 8.2 and later.) */
+    string commandTag;
 }
 
 
 /// Generic query result, returned by getQueryResults
 struct QueryResult
 {
-    /// Number of CommandComplete\EmptyQueryResponse\PortalSuspended messages received.
-    short commandsComplete;
-
-    /// Data blocks, each block being an array of rows sharing one row
-    /// description (schema). Each sql statement in simple query protocol
-    /// creates one block. Each portal execution in EQ protocol creates
-    /// one block.
+    /** Data blocks, each block being an array of rows sharing one row
+    description. Each sql statement in simple query protocol
+    creates one block. Each portal execution in EQ protocol creates one block. */
     RowBlock[] blocks;
 
     /// returns true if there is not a single data row in the response.
-    @property bool noDataRows() const
+    @property bool noDataRows() const pure @safe
     {
         foreach (block; blocks)
             if (block.dataRows.length > 0)
@@ -288,4 +328,91 @@ struct Notice
 
     /// Name of the source-code routine reporting the error.
     string routine;
+}
+
+
+void parseNoticeMessage(immutable(ubyte)[] data, ref Notice n) @safe pure
+{
+    void copyTillZero(ref string dest)
+    {
+        size_t length;
+        dest = demarshalProtocolString(data, length);
+        data = data[length..$];
+    }
+
+    void discardTillZero()
+    {
+        size_t idx = 0;
+        while (idx < data.length && data[idx])
+            idx++;
+        data = data[idx+1..$];
+    }
+
+    while (data.length > 1)
+    {
+        char fieldType = cast(char) data[0];
+        data = data[1..$];
+        // https://www.postgresql.org/docs/current/static/protocol-error-fields.html
+        switch (fieldType)
+        {
+            case 'S':
+                copyTillZero(n.severity);
+                break;
+            case 'V':
+                copyTillZero(n.severityV);
+                break;
+            case 'C':
+                assert(data.length >= 6, "Expected 5 bytes of SQLSTATE code.");
+                n.code[] = cast(immutable(char)[]) data[0..5];
+                data = data[6..$];
+                break;
+            case 'M':
+                copyTillZero(n.message);
+                break;
+            case 'D':
+                copyTillZero(n.detail);
+                break;
+            case 'H':
+                copyTillZero(n.hint);
+                break;
+            case 'P':
+                copyTillZero(n.position);
+                break;
+            case 'p':
+                copyTillZero(n.internalPos);
+                break;
+            case 'q':
+                copyTillZero(n.internalQuery);
+                break;
+            case 'W':
+                copyTillZero(n.where);
+                break;
+            case 's':
+                copyTillZero(n.schema);
+                break;
+            case 't':
+                copyTillZero(n.table);
+                break;
+            case 'c':
+                copyTillZero(n.column);
+                break;
+            case 'd':
+                copyTillZero(n.dataType);
+                break;
+            case 'n':
+                copyTillZero(n.constraint);
+                break;
+            case 'F':
+                copyTillZero(n.file);
+                break;
+            case 'L':
+                copyTillZero(n.line);
+                break;
+            case 'R':
+                copyTillZero(n.routine);
+                break;
+            default:
+                discardTillZero();
+        }
+    }
 }

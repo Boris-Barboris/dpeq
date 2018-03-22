@@ -1,5 +1,5 @@
 /**
-Commands of various nature. Prepared statement, portal and response demarshalling
+Functions of various nature. Prepared statement, portal and response demarshalling
 functions live here.
 
 Copyright: Copyright Boris-Barboris 2017.
@@ -23,8 +23,11 @@ import dpeq.exceptions;
 import dpeq.connection;
 import dpeq.constants;
 import dpeq.marshalling;
-import dpeq.schema;
+import dpeq.result;
 
+
+
+@safe:
 
 /*
 /////////////////////////////////////
@@ -40,18 +43,17 @@ trigger ReadyForQuery message anyways.
 
 Every postSimpleQuery or PSQLConnection.sync should be accompanied by getQueryResults
 call. */
-void postSimpleQuery(ConnT)(ConnT conn, string query)
+void postSimpleQuery(ConnT)(ConnT conn, string query) pure
 {
     conn.putQueryMessage(query);
 }
-
 
 /// Pre-parsed sql query with variable parameters.
 class PreparedStatement(ConnT)
 {
     protected
     {
-        const(ObjectID)[] paramTypes;
+        const(OID)[] paramTypes;
         string query;
         bool parseRequested;
         ConnT conn;
@@ -60,9 +62,9 @@ class PreparedStatement(ConnT)
     }
 
     /// name of this prepared statement, as seen by backend.
-    final @property string preparedName() const { return parsedName; }
+    final @property string preparedName() const pure { return parsedName; }
 
-    final @property short paramCount() const { return m_paramCount; }
+    final @property short paramCount() const pure { return m_paramCount; }
 
     /**
     Creates prepared statement object, wich holds dpeq utility state.
@@ -84,7 +86,7 @@ class PreparedStatement(ConnT)
     stuff.
     */
     this(ConnT conn, string query, short paramCount, bool named = false,
-        const(ObjectID)[] paramTypes = null)
+        const(OID)[] paramTypes = null) pure
     {
         assert(conn);
         assert(query);
@@ -100,7 +102,7 @@ class PreparedStatement(ConnT)
     }
 
     /// write Parse message into connection's write buffer.
-    final void postParseMessage()
+    final void postParseMessage() pure
     {
         conn.putParseMessage(parsedName, query, paramTypes[]);
         parseRequested = true;
@@ -115,7 +117,7 @@ class PreparedStatement(ConnT)
     statement specifying the unnamed statement as destination is issued.
     (Note that a simple Query message also destroys the unnamed statement.)
     */
-    final void postCloseMessage()
+    final void postCloseMessage() pure
     {
         assert(parseRequested, "prepared statement was never sent to backend");
         assert(parsedName.length, "no need to close unnamed prepared statements");
@@ -157,7 +159,7 @@ class Portal(ConnT)
         bool bindRequested = false;
     }
 
-    this(PreparedStatement!ConnT ps, bool persist = true)
+    this(PreparedStatement!ConnT ps, bool persist = true) pure
     {
         assert(ps);
         this.conn = ps.conn;
@@ -170,7 +172,7 @@ class Portal(ConnT)
 
     /// bind empty, parameterless portal. resCodes are requested format codes
     /// of resulting columns, keep it null to request everything in text format.
-    final void bind(FormatCode[] resCodes = null)
+    final void bind(FormatCode[] resCodes = null) pure
     {
         assert(prepStmt.paramCount == 0);
 
@@ -196,7 +198,7 @@ class Portal(ConnT)
             FormatCode[] resCodes = null,
             alias Marshaller = DefaultFieldMarshaller,
             Args...)
-        (in Args args)
+        (in Args args) pure
     {
         assert(prepStmt.paramCount == Args.length);
         assert(prepStmt.paramCount == specs.length);
@@ -209,7 +211,7 @@ class Portal(ConnT)
 
         enum fcodesr = [staticMap!(FCodeOfFSpec!(Marshaller).F, aliasSeqOf!specs)];
 
-        alias DlgT = int delegate(ubyte[]);
+        alias DlgT = int delegate(ubyte[]) pure @safe;
         DlgT[specs.length] marshallers;
         foreach(i, paramSpec; aliasSeqOf!specs)
         {
@@ -228,7 +230,7 @@ class Portal(ConnT)
     posted.
     */
     final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
-        scope RR returnCodeRange)
+        scope RR returnCodeRange) pure
     {
         auto safePoint = conn.saveBuffer();
         scope (failure) safePoint.restore();
@@ -241,7 +243,7 @@ class Portal(ConnT)
 
     /// Simple portal bind, wich binds all parameters as strings and requests
     /// all result columns in text format.
-    final void bind(scope Nullable!(string)[] args)
+    final void bind(scope Nullable!(string)[] args) pure
     {
         assert(prepStmt.paramCount == args.length);
 
@@ -287,7 +289,7 @@ class Portal(ConnT)
     Named portals must be explicitly closed before they can be redefined
     by another Bind message, but this is not required for the unnamed portal.
     */
-    final void postCloseMessage()
+    final void postCloseMessage() pure
     {
         assert(bindRequested, "portal was never bound");
         assert(portalName.length, "no need to close unnamed portals");
@@ -322,7 +324,7 @@ class Portal(ConnT)
     'maxRows' parameter is responsible for portal suspending and is
     conceptually inferior to simple TCP backpressure mechanisms or result set
     size limiting. */
-    final void execute(bool describe = true, int maxRows = 0)
+    final void execute(bool describe = true, int maxRows = 0) pure
     {
         assert(bindRequested, "Portal was never bound");
         if (describe)
@@ -346,7 +348,7 @@ is received. */
 QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
 {
     QueryResult res;
-    bool newBlockAwaited = true;
+    RowBlock rb;
 
     bool interceptor(Message msg, ref bool err, ref string errMsg) nothrow
     {
@@ -354,54 +356,32 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
         switch (msg.type)
         {
             case EmptyQueryResponse:
-                if (newBlockAwaited)
-                {
-                    RowBlock rb;
-                    rb.emptyQuery = true;
-                    res.blocks ~= rb;
-                }
-                res.commandsComplete++;
-                newBlockAwaited = true;
+                rb.state = RowBlockState.emptyQuery;
+                res.blocks ~= rb;
+                rb = RowBlock();
                 break;
             case CommandComplete:
-                if (newBlockAwaited)
-                    res.blocks ~= RowBlock();
-                res.commandsComplete++;
-                newBlockAwaited = true;
+                rb.state = RowBlockState.complete;
+                rb.commandTag = demarshalString(msg.data[0..$-1]);
+                res.blocks ~= rb;
+                rb = RowBlock();
                 break;
             case PortalSuspended:
-                res.commandsComplete++;
-                newBlockAwaited = true;
-                res.blocks[$-1].suspended = true;
+                rb.state = RowBlockState.suspended;
+                res.blocks ~= rb;
+                rb = RowBlock();
                 break;
             case RowDescription:
                 // RowDescription always precedes new row block data
-                if (newBlockAwaited)
-                {
-                    RowBlock rb;
-                    rb.rowDesc = dpeq.schema.RowDescription(msg.data);
-                    res.blocks ~= rb;
-                    newBlockAwaited = false;
-                }
-                else
-                {
-                    err = true;
-                    errMsg = "Unexpected RowDescription in the middle of " ~
-                        "row block";
-                }
+                rb.rowDesc = dpeq.result.RowDescription(msg.data);
                 break;
             case DataRow:
-                if (newBlockAwaited)
+                if (requireRowDescription)
                 {
-                    if (requireRowDescription)
-                    {
-                        err = true;
-                        errMsg ~= "Got row without row description. ";
-                    }
-                    res.blocks ~= RowBlock();
-                    newBlockAwaited = false;
+                    err = true;
+                    errMsg ~= "Received row without row description. ";
                 }
-                res.blocks[$-1].dataRows ~= msg; // we simply save raw bytes
+                rb.dataRows ~= msg;
                 break;
             default:
                 break;
@@ -427,15 +407,17 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
         switch (msg.type)
         {
             case EmptyQueryResponse:
-                result.emptyQuery = true;
+                result.state = RowBlockState.emptyQuery;
                 return true;
             case CommandComplete:
+                result.state = RowBlockState.complete;
+                result.commandTag = demarshalString(msg.data[0..$-1]);
                 return true;
             case PortalSuspended:
-                result.suspended = true;
+                result.state = RowBlockState.suspended;
                 return true;
             case RowDescription:
-                result.rowDesc = dpeq.schema.RowDescription(msg.data);
+                result.rowDesc = dpeq.result.RowDescription(msg.data);
                 requireRowDescription = false;
                 break;
             case DataRow:
@@ -451,7 +433,10 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
                     // client code requested early stop
                     rowCountLimit--;
                     if (rowCountLimit == 0)
+                    {
+                        result.state = RowBlockState.incomplete;
                         return true;
+                    }
                 }
                 break;
             default:
@@ -479,7 +464,7 @@ Specific flavor of Variant is derived from Converter.demarshal call return type.
 Look into marshalling.VariantConverter for demarshal implementation examples.
 Will append parsed field descriptions to fieldDescs array if passed. */
 auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
-    (RowBlock block, FieldDescription[]* fieldDescs = null)
+    (RowBlock block, FieldDescription[]* fieldDescs = null) pure
 {
     alias VariantT = ReturnType!(Converter.demarshal);
 
@@ -487,7 +472,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
         "Cannot demarshal RowBlock without row description. " ~
         "Did you send Describe message?");
     short totalColumns = block.rowDesc.fieldCount;
-    ObjectID[] typeArr = new ObjectID[totalColumns];
+    OID[] typeArr = new OID[totalColumns];
     FormatCode[] fcArr = new FormatCode[totalColumns];
 
     int i = 0;
@@ -506,8 +491,8 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
     private:
         short column = 0;
         short totalCols;
-        const(ubyte)[] buf;
-        const(ObjectID)[] types;
+        immutable(ubyte)[] buf;
+        const(OID)[] types;
         const(FormatCode)[] fcodes;
         bool parsed = false;
 
@@ -532,7 +517,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
             }
             assert(buf.length > 0);
             int len = demarshalNumber(buf[0 .. 4]);
-            const(ubyte)[] vbuf = buf[4 .. max(4, len + 4)];
+            immutable(ubyte)[] vbuf = buf[4 .. max(4, len + 4)];
             //writeln(types[column], " ", buf);
             res = Converter.demarshal(vbuf, types[column], fcodes[column], len);
             buf = buf[max(4, len + 4) .. $];
@@ -545,12 +530,12 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
     {
     private:
         Message[] dataRows;
-        ObjectID[] columnTypes;
+        OID[] columnTypes;
         FormatCode[] fcodes;
         short totalColumns;
     public:
-        @property size_t length() { return dataRows.length; }
-        @property bool empty() { return dataRows.empty; }
+        @property size_t length() const { return dataRows.length; }
+        @property bool empty() const { return dataRows.empty; }
         @property RowDemarshaller front()
         {
             return RowDemarshaller(0, totalColumns, dataRows[0].data,
@@ -573,6 +558,8 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
             return RowsRange(dataRows, columnTypes, fcodes, totalColumns);
         }
     }
+
+    static assert (isRandomAccessRange!RowsRange);
 
     return RowsRange(block.dataRows, typeArr, fcArr, totalColumns);
 }
@@ -609,7 +596,7 @@ Customazable with Demarshaller template. Will append parsed field descriptions
 to fieldDescs array if it is provided. */
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
-    (RowBlock block, FieldDescription[]* fieldDescs = null)
+    (RowBlock block, FieldDescription[]* fieldDescs = null) pure
 {
     alias ResTuple = TupleForSpec!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
@@ -618,7 +605,7 @@ auto blockToTuples
         "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
     enforce!PsqlMarshallingException(totalColumns == spec.length,
-        "Expected %d columnts in a row, got %d".format(spec.length, totalColumns));
+        "Expected %d columns in a row, got %d".format(spec.length, totalColumns));
     FormatCode[] fcArr = new FormatCode[totalColumns];
 
     int i = 0;
@@ -629,7 +616,7 @@ auto blockToTuples
         if (fieldDescs)
             (*fieldDescs)[i] = fdesc;
         fcArr[i] = fdesc.formatCode;
-        ObjectID colType = fdesc.type;
+        OID colType = fdesc.type;
         enforce!PsqlMarshallingException(colType == spec[i].typeId,
             "Colunm %d type mismatch: expected %d, got %d".format(
                 i, spec[i].typeId, colType));
@@ -638,11 +625,11 @@ auto blockToTuples
 
     //import std.stdio;
 
-    static ResTuple demarshalRow(const(ubyte)[] from, const(FormatCode)[] fcodes)
+    static ResTuple demarshalRow(immutable(ubyte)[] from, const(FormatCode)[] fcodes)
     {
         ResTuple res;
         int len = 0;
-        const(ubyte)[] vbuf;
+        immutable(ubyte)[] vbuf;
         from = from[2 .. $];    // skip 16 bits
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
@@ -663,8 +650,8 @@ auto blockToTuples
         Message[] dataRows;
         FormatCode[] fcodes;
     public:
-        @property size_t length() { return dataRows.length; }
-        @property bool empty() { return dataRows.empty; }
+        @property size_t length() const { return dataRows.length; }
+        @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
             return demarshalRow(dataRows[0].data, fcodes);
@@ -684,6 +671,8 @@ auto blockToTuples
             return RowsRange(dataRows, fcodes);
         }
     }
+
+    static assert (isRandomAccessRange!RowsRange);
 
     return RowsRange(block.dataRows, fcArr);
 }
@@ -706,18 +695,18 @@ Demarshaller template. This version does not require RowDescription, but cannot
 validate row types reliably. */
 auto blockToTuples
     (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
-    (Message[] data)
+    (Message[] data) pure
 {
     alias ResTuple = TupleForSpec!(spec, Demarshaller);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
 
     //import std.stdio;
 
-    static ResTuple demarshalRow(const(ubyte)[] from)
+    static ResTuple demarshalRow(immutable(ubyte)[] from)
     {
         ResTuple res;
         int len = 0;
-        const(ubyte)[] vbuf;
+        immutable(ubyte)[] vbuf;
         from = from[2 .. $];    // skip 16 bytes
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
@@ -738,8 +727,8 @@ auto blockToTuples
     private:
         Message[] dataRows;
     public:
-        @property size_t length() { return dataRows.length; }
-        @property bool empty() { return dataRows.empty; }
+        @property size_t length() const { return dataRows.length; }
+        @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
             return demarshalRow(dataRows[0].data);
@@ -759,6 +748,8 @@ auto blockToTuples
             return RowsRange(dataRows);
         }
     }
+
+    static assert (isRandomAccessRange!RowsRange);
 
     return RowsRange(data);
 }
