@@ -526,6 +526,8 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
         }
     }
 
+    static assert (isInputRange!RowDemarshaller);
+
     static struct RowsRange
     {
     private:

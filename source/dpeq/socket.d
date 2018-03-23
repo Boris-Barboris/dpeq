@@ -8,6 +8,7 @@ Authors: Boris-Barboris
 
 module dpeq.socket;
 
+import core.time: Duration;
 import std.socket;
 
 import dpeq.exceptions;
@@ -28,7 +29,7 @@ final class StdSocket
 
     /// Establish connection to backend. Constructor is expected to throw Exception
     /// if anything goes wrong.
-    this(string host, ushort port) @trusted
+    this(string host, ushort port, Duration timeout) @trusted
     {
         if (host[0] == '/')
         {

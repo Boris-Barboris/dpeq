@@ -8,7 +8,7 @@ Authors: Boris-Barboris
 
 module dpeq.connection;
 
-import core.time: seconds;
+import core.time: seconds, Duration;
 
 import std.exception: enforce;
 import std.conv: to;
@@ -137,14 +137,14 @@ class PSQLConnection(
     /// Allocate reuired memory, build socket and authorize the connection.
     /// Throws: $(D PsqlSocketException) if transport failed, or
     /// $(D PsqlClientException) if authorization failed for some reason.
-    this(const BackendParams bp, size_t writeBufSize = 2 * 4096) @safe
+    this(const BackendParams bp, Duration connectTimeout = seconds(10), size_t writeBufSize = 2 * 4096) @safe
     {
         m_backendParams = bp;
         writeBuffer.length = writeBufSize;
         try
         {
             logTrace("Trying to open TCP connection to PSQL");
-            m_socket = new SocketT(bp.host, bp.port);
+            m_socket = new SocketT(bp.host, bp.port, connectTimeout);
             logTrace("Success");
         }
         catch (Exception e)
@@ -178,7 +178,7 @@ class PSQLConnection(
     */
     void cancelRequest() @safe
     {
-        SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port);
+        SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port, seconds(5));
         ubyte[4 * 4] intBuf;
         marshalFixedField(intBuf[0..4], int(16));
         marshalFixedField(intBuf[4..8], int(80877102));
