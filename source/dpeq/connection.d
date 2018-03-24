@@ -41,7 +41,7 @@ enum StmtOrPortal: char
 }
 
 // When the client code is uninterested in dpeq connection logging.
-pragma(inline, true) void nop_logger(T...)(string fmt, lazy T vals) nothrow @safe pure {}
+pragma(inline, true) void nop_logger(T...)(string fmt, T vals) nothrow @safe pure {}
 
 /**
 Connection object.
