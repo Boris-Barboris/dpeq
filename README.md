@@ -7,7 +7,7 @@ PostgreSQL extended query (EQ) protocol. EQ is a stateful message-based binary
 protocol working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
 to hold the required state and utility functions, that send and receive protocol
 messages in sensible manner. On top of that, dpeq includes extensible
-schema-oriented marshalling functionality, wich maps PSQL types to their
+schema-oriented serialization functionality, wich maps PSQL types to their
 binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
@@ -24,17 +24,18 @@ https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
 * source/dpeq/connection.d - buffered message streamer *PSQLConnection* is used
   to send and receive messages. It's a class template with customazable socket
   type (so you can easily use it with vibe-d) and logging functions.
-* source/dpeq/schema.d - structures that describe query results.
+* source/dpeq/result.d - structures that describe query results.
+* source/dpeq/socket.d - socket prototype wich is accepted by dpeq connection class.
 * source/dpeq/command.d - classes and functions that implement typical operations
   on the connection. You can find examples of *PreparedStatement* and *Portal*
   class implementations there. *getQueryResults* function
-  from this module is bread and butter for response demarshalling. *blockToVariants*
-  and *blockToTuples* are example demarshalling implementations that allow you to
+  from this module is bread and butter for response allocation. *blockToVariants*
+  and *blockToTuples* are example deserialization implementations that allow you to
   lazily work with QueryResults, returned by *getQueryResults*.
 * source/dpeq/constants.d - sorry ass header file.
 * source/dpeq/exceptions.d - exceptions, explicitly thrown from dpeq code.
-* source/dpeq/marshalling.d - templated (de)marshalling code, used throughout
-  dpeq. This is the place to research for ways to inject custom type behaviour.
+* source/dpeq/serialize.d - templated serialization code, used throughout
+  dpeq. This is the place to research for ways to add unhandled types.
 
 ## How to use vibe-d sockets?
 Wrap them into class and pass it as a template parameter to PSQLConnection.
@@ -44,7 +45,7 @@ final class SocketT
     // Vibe-d TCPConnection
     TCPConnection m_con;
 
-    this(string host, ushort port)
+    this(string host, ushort port, Duration conTimeout)
     {
         m_con = connectTCP(host, port);
         // maybe set timeouts and keepalive here
@@ -84,10 +85,10 @@ final class SocketT
 ## Supported native types
 SMALLINT, INT, OID, BIGINT, BOOLEAN, UUID, REAL, DOUBLE PRECISION
 are handled using their respective binary type representations. Types that are
-unknown to the marshalling template are transferred using their text representation,
+unknown to the serialization template are transferred using their text representation,
 thus delegating additional parsing and validation check to PostgreSQL server.
-To quickly hack missing types in, *DefaultFieldMarshaller*, *VariantConverter*
-and most marshalling-related templates accept template parameters wich can be
+To quickly hack missing types in, *DefaultSerializer*, *VariantConverter*
+and most serialization-related templates accept template parameters wich can be
 used to override or extend type mapping from the client code.
 
 ## Supported authorization mechanisms
@@ -123,7 +124,7 @@ section will try to explain in detail, what is happening in the code.
 ### Create table using *simpleQuery*
 ```D
 /*
-Most marshalling functions in dpeq are statically typed. Remote, postgresql
+Most serialization functions in dpeq are statically typed. Remote, postgresql
 types are treated as an absolute truth, not the other way around. Dpeq templates
 then perform lookup and validate types you pass to dpeq functions during
 compilation. Although PSQLConnection and Portal interfaces (bind-related
@@ -131,7 +132,7 @@ calls are generic) are flexible enough to use them with runtime-dispatched, OOP
 values, dpeq only implements static lookup.
 
 You can think of it this way: values passed to the socket can be represented by
-statically known tuple, or by a range of interfaces that implement marshalling
+statically known tuple, or by a range of interfaces that implement serialization
 methods. Ultimately, PSQLConnection accepts the second type, however the rest
 of the library wrap it in the first type.
 
@@ -202,7 +203,7 @@ void createTestSchema(ConT)(ConT con)
     increase the efficiency. Lesser segment fragmentation and syscall frequency
     are an obvious advantage. You can also protect the server from reading junk
     when the last message from a group of logically grouped (transaction) has
-    failed to marshal. You can return an error to user and clear the write buffer
+    failed to serialize. You can return an error to user and clear the write buffer
     without bothering the server (PSQLConnection.discard method).
     */
     con.flush();
@@ -233,7 +234,7 @@ void createTestSchema(ConT)(ConT con)
 FSpecsToFCodes converts array of FieldSpecs to the array of FormatCodes.
 EQ protocol requires client to explicitly specify return type format codes, if
 the client wants to use binary data transfer. If not, all values in responses
-will be transferred as text. All demarshallers defined in dpeq accept text
+will be transferred as text. All deserializers defined in dpeq accept text
 representation.
 
 This line evaluates the efficient array of format codes for the testTableSpec
@@ -345,7 +346,7 @@ void main()
         -3.14,
         Nullable!double(),  // null
         // notice, that PgType.INET , wich is unknown to binary
-        // marshalling templates, is represented by string in TestTupleT.
+        // serialization templates, is represented by string in TestTupleT.
         "192.168.0.1",
         Nullable!string("127.0.0.1")
     );
@@ -354,11 +355,11 @@ void main()
     Portal class implements bind method, wich:
         - type-checks arguments wich row spec.
         - closes previous portal if it is a persistent one.
-        - builds the array of scoped delegates, pointing to correct marshallers
+        - builds the array of scoped delegates, pointing to correct serializers
           to pass it to PSQLConnection.putBindMessage method.
-        - calls PSQLConnection.putBindMessage, wich orderly calls marshallers
+        - calls PSQLConnection.putBindMessage, wich orderly calls serializers
           and fills connection's write buffer.
-        - rolls write buffer back if marshalling fails.
+        - rolls write buffer back if serialization fails.
     */
     portal.bind!(testTableSpec, testTableRowFormats)(sentTuple.expand);
 
@@ -369,7 +370,7 @@ void main()
 
     Optional parameter 'describe', when set to false, prevents the server from
     sending RowDescription message, thus saving the network capacity. Some
-    demarshalling functions require the QueryResult to have RowDescription.
+    deserialization functions require the QueryResult to have RowDescription.
     One of the 'blockToTuples' overloads does not, and is therefore recommended
     for folks of all ages.
 
@@ -433,10 +434,10 @@ void main()
 
     /*
     Row descriptions in result blocks are treated as HTTP headers -
-    rarely needed hence lazily demarshalled. rowDesc should be sliced ([])
+    rarely needed hence lazily deserialized. rowDesc should be sliced ([])
     in order to get an InputRange of FieldDescription structures, each
     describing it's own column. The line below eagerly allocates an array
-    in order to support random access, and fills it with partially-demarshalled
+    in order to support random access, and fills it with partially-deserialized
     FieldDescriptions.
     */
     FieldDescription[] rowDesc = res.blocks[0].rowDesc[].array;
@@ -446,7 +447,7 @@ void main()
         /*
         formatCode property actually calls the number conversion
         code (bigendian to x86 little-endian) wich gets you a nice native
-        number to read. Strings, like in most demarshalling functions,
+        number to read. Strings, like in most deserialization functions,
         are not reallocated and span the memory of the original message,
         received from the socket.
         */
@@ -480,11 +481,11 @@ void main()
     /*
     This overload of blockToTuples takes in an array of data messages that
     belong to one data block and converts them to random access range of
-    lazily-demarshalled tuples. We expect exactly the same tuple we have
+    lazily-deserialized tuples. We expect exactly the same tuple we have
     inserted, hence the usage of testTableSpec as an expected row spec.
     */
     auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
-    foreach (row; rows) // actual call to demarshallers happens here
+    foreach (row; rows) // actual call to deserializers happens here
     {
         import std.range: iota;
         writeln("\nrow received, it's tuple representation:");
@@ -520,9 +521,9 @@ void main()
 
     /*
     Alternative to the tuple converter is a variant converter, wich
-    looks onto row description and deduces the type of demarshaller
+    looks onto row description and deduces the type of deserializer
     dynamically. It returns RandomAccessRange of InputRanges of
-    lazily-demarshalled variants.
+    lazily-deserialized variants.
     By default it's the subtype of std.variant.Variant, wich has convenient
     isNull function defined to keep it in line with Nullable interface.
     */
@@ -530,7 +531,7 @@ void main()
     foreach (row; variantRows)
     {
         writeln("\nrow received, it's variant representation:");
-        foreach (col; row)  // actual call to demarshallers happens here
+        foreach (col; row)  // actual call to deserializers happens here
             writeln(col.type, " ", col.toString);
         /* prints:
         row received, it's variant representation:

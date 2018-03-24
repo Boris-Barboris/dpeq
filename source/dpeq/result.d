@@ -17,7 +17,7 @@ import std.range;
 import dpeq.exceptions;
 import dpeq.connection;
 import dpeq.constants;
-import dpeq.marshalling;
+import dpeq.serialize;
 
 
 /// Message, received from backend.
@@ -30,7 +30,7 @@ struct Message
 }
 
 
-/// Lazily-demarshalled field (column) description
+/// Lazily-deserialized field (column) description
 struct FieldDescription
 {
     @safe pure:
@@ -38,41 +38,41 @@ struct FieldDescription
     @property string name() const
     {
         // from c-string to d-string, no allocation
-        return demarshalString(m_buf[0..nameLength-1]);
+        return deserializeString(m_buf[0..nameLength-1]);
     }
 
     /// If the field can be identified as a column of a specific table,
     /// the object ID of the table; otherwise zero.
     @property OID table() const
     {
-        return demarshalNumber(m_buf[nameLength .. nameLength + 4]);
+        return deserializeNumber(m_buf[nameLength .. nameLength + 4]);
     }
 
     /// If the field can be identified as a column of a specific table,
     /// the attribute number of the column; otherwise zero.
     @property short columnId() const
     {
-        return demarshalNumber!short(m_buf[nameLength + 4 .. nameLength + 6]);
+        return deserializeNumber!short(m_buf[nameLength + 4 .. nameLength + 6]);
     }
 
     /// The object ID of the field's data type.
     @property OID type() const
     {
-        return demarshalNumber(m_buf[nameLength + 6 .. nameLength + 10]);
+        return deserializeNumber(m_buf[nameLength + 6 .. nameLength + 10]);
     }
 
     /// The data type size (see pg_type.typlen).
     /// Note that negative values denote variable-width types.
     @property short typeLen() const
     {
-        return demarshalNumber!short(m_buf[nameLength + 10 .. nameLength + 12]);
+        return deserializeNumber!short(m_buf[nameLength + 10 .. nameLength + 12]);
     }
 
     /// The type modifier (see pg_attribute.atttypmod).
     /// The meaning of the modifier is type-specific.
     @property int typeModifier() const
     {
-        return demarshalNumber(m_buf[nameLength + 12 .. nameLength + 16]);
+        return deserializeNumber(m_buf[nameLength + 12 .. nameLength + 16]);
     }
 
     /// The format code being used for the field. Currently will be zero (text)
@@ -81,7 +81,7 @@ struct FieldDescription
     @property FormatCode formatCode() const
     {
         return cast(FormatCode)
-            demarshalNumber!short(m_buf[nameLength + 16 .. nameLength + 18]);
+            deserializeNumber!short(m_buf[nameLength + 16 .. nameLength + 18]);
     }
 
     /// backing buffer, owned by Message
@@ -90,7 +90,7 @@ struct FieldDescription
     /// length of name C-string wich spans the head of backing buffer
     private int nameLength;
 
-    static FieldDescription demarshal(immutable(ubyte)[] buf, out int bytesDiscarded)
+    static FieldDescription deserialize(immutable(ubyte)[] buf, out int bytesDiscarded)
     {
         int bytesRead = 0;
         while (buf[bytesRead])  // name is C-string, so it ends with zero
@@ -110,7 +110,7 @@ struct RowDescription
     /// number of fields (columns) in a row
     @property short fieldCount() const
     {
-        return demarshalNumber!short(m_buf[0 .. 2]);
+        return deserializeNumber!short(m_buf[0 .. 2]);
     }
 
     /// buffer owned by Message
@@ -135,27 +135,27 @@ struct RowDescription
 
             @property bool empty() const
             {
-                return buf.length == 0 && !frontDemarshalled;
+                return buf.length == 0 && !frontDeserialized;
             }
 
-            private bool frontDemarshalled = false;
+            private bool frontDeserialized = false;
             private FieldDescription _front;
 
             @property FieldDescription front()
             {
-                if (frontDemarshalled)
+                if (frontDeserialized)
                     return _front;
                 assert(buf.length > 0);
                 int shift = 0;
-                _front = FieldDescription.demarshal(buf, shift);
+                _front = FieldDescription.deserialize(buf, shift);
                 buf = buf[shift .. $];
-                frontDemarshalled = true;
+                frontDeserialized = true;
                 return _front;
             }
 
             void popFront()
             {
-                frontDemarshalled = false;
+                frontDeserialized = false;
             }
 
             FieldDescrRange save() const
@@ -336,7 +336,7 @@ void parseNoticeMessage(immutable(ubyte)[] data, ref Notice n) @safe pure
     void copyTillZero(ref string dest)
     {
         size_t length;
-        dest = demarshalProtocolString(data, length);
+        dest = deserializeProtocolString(data, length);
         data = data[length..$];
     }
 

@@ -1,5 +1,5 @@
 /**
-Functions of various nature. Prepared statement, portal and response demarshalling
+Functions of various nature. Prepared statement, portal and response deserialization
 functions live here.
 
 Copyright: Copyright Boris-Barboris 2017.
@@ -22,7 +22,7 @@ import std.typecons;
 import dpeq.exceptions;
 import dpeq.connection;
 import dpeq.constants;
-import dpeq.marshalling;
+import dpeq.serialize;
 import dpeq.result;
 
 
@@ -189,14 +189,14 @@ class Portal(ConnT)
     /**
     For the 'specs' array of prepared statement parameters types, known at
     compile-time, write Bind message to connection's write buffer from the
-    representation of 'args' parameters, marshalled to 'specs' types according
-    to 'Marshaller' template. Format codes of the response columns is set
+    representation of 'args' parameters, serialized to 'specs' types according
+    to 'Serializer' template. Format codes of the response columns is set
     via 'resCodes' array, known at compile time.
     */
     final void bind(
             FieldSpec[] specs,
             FormatCode[] resCodes = null,
-            alias Marshaller = DefaultFieldMarshaller,
+            alias Serializer = DefaultSerializer,
             Args...)
         (in Args args) pure
     {
@@ -209,27 +209,27 @@ class Portal(ConnT)
         if (bindRequested && portalName.length)
             postCloseMessage();
 
-        enum fcodesr = [staticMap!(FCodeOfFSpec!(Marshaller).F, aliasSeqOf!specs)];
+        enum fcodesr = [staticMap!(FCodeOfFSpec!(Serializer).F, aliasSeqOf!specs)];
 
         alias DlgT = int delegate(ubyte[]) pure @safe;
-        DlgT[specs.length] marshallers;
+        DlgT[specs.length] serializers;
         foreach(i, paramSpec; aliasSeqOf!specs)
         {
-            marshallers[i] =
-                (ubyte[] to) => Marshaller!paramSpec.marshal(to, args[i]);
+            serializers[i] =
+                (ubyte[] to) => Serializer!paramSpec.serialize(to, args[i]);
         }
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
-            marshallers, resCodes);
+            serializers, resCodes);
         bindRequested = true;
     }
 
     /** This version of bind accept generic InputRanges of format codes and
-    field marshallers and passes them directly to putBindMessage method of
+    field serializers and passes them directly to putBindMessage method of
     connection object. No parameter count and type validation is performed.
     If this portal is already bound and is a named one, Close message is
     posted.
     */
-    final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramMarshRange,
+    final void bind(FR, PR, RR)(scope FR paramCodeRange, scope PR paramRange,
         scope RR returnCodeRange) pure
     {
         auto safePoint = conn.saveBuffer();
@@ -237,39 +237,39 @@ class Portal(ConnT)
         if (bindRequested && portalName.length)
             postCloseMessage();
         conn.putBindMessage(portalName, prepStmt.parsedName, paramCodeRange,
-            paramMarshRange, returnCodeRange);
+            paramRange, returnCodeRange);
         bindRequested = true;
     }
 
     /// Simple portal bind, wich binds all parameters as strings and requests
     /// all result columns in text format.
-    final void bind(scope Nullable!(string)[] args) pure
+    final void bind(scope const(Nullable!string)[] args) pure
     {
         assert(prepStmt.paramCount == args.length);
 
         if (bindRequested && portalName.length)
             postCloseMessage();
 
-        static struct StrMarshaller
+        static struct StrSerializer
         {
-            Nullable!string str;
-            this(Nullable!string v) { str = v; }
+            const Nullable!string str;
+            this(const(Nullable!string) v) { str = v; }
 
-            int opCall(ubyte[] buf)
+            int opCall(ubyte[] buf) const
             {
-                return marshalNullableStringField(buf, str);
+                return serializeNullableStringField(buf, str);
             }
         }
 
         static struct MarshRange
         {
-            Nullable!(string)[] params;
+            const(Nullable!string)[] params;
             int idx = 0;
-            @property bool empty() { return idx >= params.length; }
+            @property bool empty() const { return idx >= params.length; }
             void popFront() { idx++; }
-            @property StrMarshaller front()
+            @property StrSerializer front() const
             {
-                return StrMarshaller(params[idx]);
+                return StrSerializer(params[idx]);
             }
         }
 
@@ -362,7 +362,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 break;
             case CommandComplete:
                 rb.state = RowBlockState.complete;
-                rb.commandTag = demarshalString(msg.data[0..$-1]);
+                rb.commandTag = deserializeString(msg.data[0..$-1]);
                 res.blocks ~= rb;
                 rb = RowBlock();
                 break;
@@ -411,7 +411,7 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
                 return true;
             case CommandComplete:
                 result.state = RowBlockState.complete;
-                result.commandTag = demarshalString(msg.data[0..$-1]);
+                result.commandTag = deserializeString(msg.data[0..$-1]);
                 return true;
             case PortalSuspended:
                 result.state = RowBlockState.suspended;
@@ -459,24 +459,24 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
 
 //import std.stdio;
 
-/** Returns RandomAccessRange of InputRanges of lazy-demarshalled variants.
-Specific flavor of Variant is derived from Converter.demarshal call return type.
-Look into marshalling.VariantConverter for demarshal implementation examples.
+/** Returns RandomAccessRange of InputRanges of lazy-deserialized variants.
+Specific flavor of Variant is derived from Converter.deserialize call return type.
+Look into serialize.VariantConverter for deserialize implementation examples.
 Will append parsed field descriptions to fieldDescs array if passed. */
-auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
+auto blockToVariants(alias Converter = VariantConverter!DefaultSerializer)
     (RowBlock block, FieldDescription[]* fieldDescs = null) pure
 {
-    alias VariantT = ReturnType!(Converter.demarshal);
+    alias VariantT = ReturnType!(Converter.deserialize);
 
-    enforce!PsqlMarshallingException(block.rowDesc.isSet,
-        "Cannot demarshal RowBlock without row description. " ~
+    enforce!PsqlSerializationException(block.rowDesc.isSet,
+        "Cannot deserialize RowBlock without row description. " ~
         "Did you send Describe message?");
     short totalColumns = block.rowDesc.fieldCount;
     OID[] typeArr = new OID[totalColumns];
     FormatCode[] fcArr = new FormatCode[totalColumns];
 
     int i = 0;
-    foreach (fdesc; block.rowDesc[]) // row description demarshalling happens here
+    foreach (fdesc; block.rowDesc[]) // row description deserialization happens here
     {
         //writeln(fdesc.name);
         //writeln(fdesc.formatCode);
@@ -486,7 +486,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
         typeArr[i++] = fdesc.type;
     }
 
-    static struct RowDemarshaller
+    static struct RowDeserializer
     {
     private:
         short column = 0;
@@ -496,7 +496,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
         const(FormatCode)[] fcodes;
         bool parsed = false;
 
-        // cache result to prevent repeated demarshalling on
+        // cache result to prevent repeated deserialization on
         // front() call.
         VariantT res;
     public:
@@ -516,17 +516,17 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
                 buf = buf[2 .. $];
             }
             assert(buf.length > 0);
-            int len = demarshalNumber(buf[0 .. 4]);
+            int len = deserializeNumber(buf[0 .. 4]);
             immutable(ubyte)[] vbuf = buf[4 .. max(4, len + 4)];
             //writeln(types[column], " ", buf);
-            res = Converter.demarshal(vbuf, types[column], fcodes[column], len);
+            res = Converter.deserialize(vbuf, types[column], fcodes[column], len);
             buf = buf[max(4, len + 4) .. $];
             parsed = true;
             return res;
         }
     }
 
-    static assert (isInputRange!RowDemarshaller);
+    static assert (isInputRange!RowDeserializer);
 
     static struct RowsRange
     {
@@ -538,19 +538,19 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
     public:
         @property size_t length() const { return dataRows.length; }
         @property bool empty() const { return dataRows.empty; }
-        @property RowDemarshaller front()
+        @property RowDeserializer front()
         {
-            return RowDemarshaller(0, totalColumns, dataRows[0].data,
+            return RowDeserializer(0, totalColumns, dataRows[0].data,
                 columnTypes, fcodes);
         }
-        @property RowDemarshaller back()
+        @property RowDeserializer back()
         {
-            return RowDemarshaller(0, totalColumns, dataRows[$-1].data,
+            return RowDeserializer(0, totalColumns, dataRows[$-1].data,
                 columnTypes, fcodes);
         }
-        RowDemarshaller opIndex(size_t i)
+        RowDeserializer opIndex(size_t i)
         {
-            return RowDemarshaller(0, totalColumns, dataRows[i].data,
+            return RowDeserializer(0, totalColumns, dataRows[i].data,
                 columnTypes, fcodes);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
@@ -570,48 +570,48 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultFieldMarshaller)
 
 
 /// for row spec `spec` build native tuple representation.
-template TupleForSpec(FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
+template TupleForSpec(FieldSpec[] spec, alias Deserializer = DefaultSerializer)
 {
     alias TupleForSpec =
         Tuple!(
             staticMap!(
-                SpecMapper!(Demarshaller).Func,
+                SpecMapper!(Deserializer).Func,
                 aliasSeqOf!spec));
 }
 
 /// Template function Func returns D type wich corresponds to FieldSpec.
-template SpecMapper(alias Demarshaller)
+template SpecMapper(alias Deserializer)
 {
     template Func(FieldSpec spec)
     {
-        static if (is(Demarshaller!spec.type))
-            alias Func = Demarshaller!spec.type;
+        static if (is(Deserializer!spec.type))
+            alias Func = Deserializer!spec.type;
         else
-            static assert(0, "Demarshaller doesn't support type with oid " ~
+            static assert(0, "Deserializer doesn't support type with oid " ~
                 spec.typeId.to!string);
     }
 }
 
 
-/** Returns RandomAccessRange of lazily-demarshalled tuples.
-Customazable with Demarshaller template. Will append parsed field descriptions
+/** Returns RandomAccessRange of lazily-deserialized tuples.
+Customazable with Deserializer template. Will append parsed field descriptions
 to fieldDescs array if it is provided. */
 auto blockToTuples
-    (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
+    (FieldSpec[] spec, alias Deserializer = DefaultSerializer)
     (RowBlock block, FieldDescription[]* fieldDescs = null) pure
 {
-    alias ResTuple = TupleForSpec!(spec, Demarshaller);
+    alias ResTuple = TupleForSpec!(spec, Deserializer);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
-    enforce!PsqlMarshallingException(block.rowDesc.isSet,
-        "Cannot demarshal RowBlock without row description. " ~
+    enforce!PsqlSerializationException(block.rowDesc.isSet,
+        "Cannot deserialize RowBlock without row description. " ~
         "Did you send describe message?");
     short totalColumns = block.rowDesc.fieldCount;
-    enforce!PsqlMarshallingException(totalColumns == spec.length,
+    enforce!PsqlSerializationException(totalColumns == spec.length,
         "Expected %d columns in a row, got %d".format(spec.length, totalColumns));
     FormatCode[] fcArr = new FormatCode[totalColumns];
 
     int i = 0;
-    foreach (fdesc; block.rowDesc[]) // row description demarshalling happens here
+    foreach (fdesc; block.rowDesc[]) // row description deserialization happens here
     {
         //writeln(fdesc.name);
         //writeln(fdesc.formatCode);
@@ -619,7 +619,7 @@ auto blockToTuples
             (*fieldDescs)[i] = fdesc;
         fcArr[i] = fdesc.formatCode;
         OID colType = fdesc.type;
-        enforce!PsqlMarshallingException(colType == spec[i].typeId,
+        enforce!PsqlSerializationException(colType == spec[i].typeId,
             "Colunm %d type mismatch: expected %d, got %d".format(
                 i, spec[i].typeId, colType));
         i++;
@@ -627,7 +627,7 @@ auto blockToTuples
 
     //import std.stdio;
 
-    static ResTuple demarshalRow(immutable(ubyte)[] from, const(FormatCode)[] fcodes)
+    static ResTuple deserializeRow(immutable(ubyte)[] from, const(FormatCode)[] fcodes)
     {
         ResTuple res;
         int len = 0;
@@ -635,13 +635,13 @@ auto blockToTuples
         from = from[2 .. $];    // skip 16 bits
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
-            len = demarshalNumber(from[0 .. 4]);
+            len = deserializeNumber(from[0 .. 4]);
             //writeln("col ", i, ", len = ", len, " from = ", from);
             vbuf = from[4 .. max(4, len + 4)];
-            res[i] = Demarshaller!(colSpec).demarshal(vbuf, fcodes[i], len);
+            res[i] = Deserializer!(colSpec).deserialize(vbuf, fcodes[i], len);
             from = from[max(4, len + 4) .. $];
         }
-        enforce!PsqlMarshallingException(from.length == 0,
+        enforce!PsqlSerializationException(from.length == 0,
             "%d bytes left in supposedly emptied row".format(from.length));
         return res;
     }
@@ -656,15 +656,15 @@ auto blockToTuples
         @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
-            return demarshalRow(dataRows[0].data, fcodes);
+            return deserializeRow(dataRows[0].data, fcodes);
         }
         @property ResTuple back()
         {
-            return demarshalRow(dataRows[$-1].data, fcodes);
+            return deserializeRow(dataRows[$-1].data, fcodes);
         }
         ResTuple opIndex(size_t i)
         {
-            return demarshalRow(dataRows[i].data, fcodes);
+            return deserializeRow(dataRows[i].data, fcodes);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
         void popBack() { dataRows = dataRows[0 .. $-1]; }
@@ -680,31 +680,31 @@ auto blockToTuples
 }
 
 
-class FormatCodesOfSpec(FieldSpec[] spec, alias Demarshaller)
+class FormatCodesOfSpec(FieldSpec[] spec, alias Deserializer)
 {
     static const(FormatCode)[spec.length] codes;
 
     static this()
     {
         foreach (i, fpec; aliasSeqOf!spec)
-            codes[i] = Demarshaller!fpec.formatCode;
+            codes[i] = Deserializer!fpec.formatCode;
     }
 }
 
 
-/** Returns RandomAccessRange of lazy-demarshalled tuples. Customazable with
-Demarshaller template. This version does not require RowDescription, but cannot
+/** Returns RandomAccessRange of lazy-deserialized tuples. Customazable with
+Deserializer template. This version does not require RowDescription, but cannot
 validate row types reliably. */
 auto blockToTuples
-    (FieldSpec[] spec, alias Demarshaller = DefaultFieldMarshaller)
+    (FieldSpec[] spec, alias Deserializer = DefaultSerializer)
     (Message[] data) pure
 {
-    alias ResTuple = TupleForSpec!(spec, Demarshaller);
+    alias ResTuple = TupleForSpec!(spec, Deserializer);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
 
     //import std.stdio;
 
-    static ResTuple demarshalRow(immutable(ubyte)[] from)
+    static ResTuple deserializeRow(immutable(ubyte)[] from)
     {
         ResTuple res;
         int len = 0;
@@ -712,14 +712,14 @@ auto blockToTuples
         from = from[2 .. $];    // skip 16 bytes
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
-            len = demarshalNumber(from[0 .. 4]);
+            len = deserializeNumber(from[0 .. 4]);
             //writeln("col ", i, ", len = ", len, " from = ", from);
             vbuf = from[4 .. max(4, len + 4)];
-            FormatCode fcode = FCodeOfFSpec!(Demarshaller).F!(colSpec);
-            res[i] = Demarshaller!(colSpec).demarshal(vbuf, fcode, len);
+            FormatCode fcode = FCodeOfFSpec!(Deserializer).F!(colSpec);
+            res[i] = Deserializer!(colSpec).deserialize(vbuf, fcode, len);
             from = from[max(4, len + 4) .. $];
         }
-        enforce!PsqlMarshallingException(from.length == 0,
+        enforce!PsqlSerializationException(from.length == 0,
             "%d bytes left in supposedly emptied row".format(from.length));
         return res;
     }
@@ -733,15 +733,15 @@ auto blockToTuples
         @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
-            return demarshalRow(dataRows[0].data);
+            return deserializeRow(dataRows[0].data);
         }
         @property ResTuple back()
         {
-            return demarshalRow(dataRows[$-1].data);
+            return deserializeRow(dataRows[$-1].data);
         }
         ResTuple opIndex(size_t i)
         {
-            return demarshalRow(dataRows[i].data);
+            return deserializeRow(dataRows[i].data);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
         void popBack() { dataRows = dataRows[0 .. $-1]; }

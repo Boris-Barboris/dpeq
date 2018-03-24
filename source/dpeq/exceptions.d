@@ -36,7 +36,7 @@ class PsqlClientException: Exception
     mixin ExceptionConstructors;
 }
 
-class PsqlMarshallingException: PsqlClientException
+class PsqlSerializationException: PsqlClientException
 {
     mixin ExceptionConstructors;
 }

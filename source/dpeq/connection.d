@@ -17,7 +17,7 @@ import std.range;
 
 import dpeq.constants;
 import dpeq.exceptions;
-import dpeq.marshalling;
+import dpeq.serialize;
 import dpeq.result;
 import dpeq.socket;
 
@@ -41,7 +41,7 @@ enum StmtOrPortal: char
 }
 
 // When the client code is uninterested in dpeq connection logging.
-private pragma(inline, true) void nop_logger(T...)(T vals) nothrow @safe pure {}
+pragma(inline, true) void nop_logger(T...)(string fmt, lazy T vals) nothrow @safe pure {}
 
 /**
 Connection object.
@@ -180,10 +180,10 @@ class PSQLConnection(
     {
         SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port, seconds(5));
         ubyte[4 * 4] intBuf;
-        marshalFixedField(intBuf[0..4], int(16));
-        marshalFixedField(intBuf[4..8], int(80877102));
-        marshalFixedField(intBuf[8..12], m_processId);
-        marshalFixedField(intBuf[12..16], m_cancellationKey);
+        serializeFixedField(intBuf[0..4], int(16));
+        serializeFixedField(intBuf[4..8], int(80877102));
+        serializeFixedField(intBuf[8..12], m_processId);
+        serializeFixedField(intBuf[12..16], m_cancellationKey);
         sock.send(intBuf[]);
         sock.close();
     }
@@ -223,7 +223,7 @@ class PSQLConnection(
 
     /// Save write buffer cursor in order to be able to restore it in case of errors.
     /// Use it to prevent sending junk to backend when something goes wrong during
-    /// marshalling or message creation.
+    /// deserialization or message creation.
     final auto saveBuffer() pure @safe
     {
         static struct WriteCursor
@@ -266,9 +266,9 @@ class PSQLConnection(
     * specified format code is applied to all parameters; or it can equal
     * the actual number of parameters.
     * The parameter format codes. Each must presently be zero (text) or one (binary).
-    * `parameters` is input range of marshalling delegates.
+    * `parameters` is input range of deserialization delegates.
     *
-    * 'parameters' - input range of marshaller closures. Actual data should
+    * 'parameters' - input range of serializeler closures. Actual data should
     * be self-contained in this parameter. Marshaller is a callable that
     * is covariant with "int delegate(ubyte[] buf)" and returns -2 if buf
     * is too small, -1 if parameter is null and an actual number of bytes written
@@ -316,7 +316,7 @@ class PSQLConnection(
         foreach (param; parameters)
         {
             auto paramPrefix = reserveLen!int();
-            int r = wrappedMarsh(param);
+            int r = wrappedSerialize(param);
             logTrace("Bind: wrote 4bytes + %d bytes for value", r);
             paramPrefix.write(r);    // careful! -1 means Null
             pcount++;
@@ -556,10 +556,10 @@ class PSQLConnection(
                     if (notificationCallback !is null)
                     {
                         Notification n;
-                        n.procId = demarshalNumber!int(msg.data[0..4]);
+                        n.procId = deserializeNumber!int(msg.data[0..4]);
                         size_t l;
-                        n.channel = demarshalProtocolString(msg.data[4..$], l);
-                        n.payload = demarshalString(msg.data[4+l..$-1]);
+                        n.channel = deserializeProtocolString(msg.data[4..$], l);
+                        n.payload = deserializeString(msg.data[4+l..$-1]);
                         finish |= notificationCallback(this, n);
                     }
                     break;
@@ -630,7 +630,7 @@ protected:
                         eMsg ~= "Unexpected second Authentication " ~
                             "message received from backend";
                     }
-                    authType = demarshalNumber(msg.data[0..4]);
+                    authType = deserializeNumber(msg.data[0..4]);
                     if (authType == 0)  // instantly authorized, so we'll get readyForQuery
                         readyForQueryExpected++;
                     else
@@ -638,8 +638,8 @@ protected:
                 }
                 else if (msg.type == BackendMessageType.BackendKeyData)
                 {
-                    m_processId = demarshalNumber(msg.data[0..4]);
-                    m_cancellationKey = demarshalNumber(msg.data[4..8]);
+                    m_processId = deserializeNumber(msg.data[0..4]);
+                    m_cancellationKey = deserializeNumber(msg.data[4..8]);
                 }
                 return false;
             }, true);
@@ -670,11 +670,11 @@ protected:
         int authRes = -1;
         pollMessages((Message msg, ref bool e, ref string eMsg) {
                 if (msg.type == BackendMessageType.Authentication)
-                    authRes = demarshalNumber(msg.data[0..4]);
+                    authRes = deserializeNumber(msg.data[0..4]);
                 else if (msg.type == BackendMessageType.BackendKeyData)
                 {
-                    m_processId = demarshalNumber(msg.data[0..4]);
-                    m_cancellationKey = demarshalNumber(msg.data[4..8]);
+                    m_processId = deserializeNumber(msg.data[0..4]);
+                    m_cancellationKey = deserializeNumber(msg.data[4..8]);
                 }
                 return false;
             });
@@ -730,9 +730,9 @@ protected:
         }
     }
 
-    /// extends writeBuffer if marshalling functor m is lacking space (returns -2)
-    final int wrappedMarsh(MarshT)(scope MarshT m) pure @safe
-        if (isCallable!MarshT)
+    /// extends writeBuffer if serializer 'm' is lacking space (returns -2)
+    final int wrappedSerialize(SerialT)(scope SerialT m) pure @safe
+        if (isCallable!SerialT)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
         while (bcount == -2)
@@ -750,7 +750,7 @@ protected:
     final int write(T)(T val) pure @safe nothrow
         if (isNumeric!T)
     {
-        return wrappedMarsh((ubyte[] buf) => marshalFixedField(buf, val));
+        return wrappedSerialize((ubyte[] buf) => serializeFixedField(buf, val));
     }
 
     /// Reserve space in write buffer for length prefix and return
@@ -775,14 +775,14 @@ protected:
                 else
                     assert(len >= T.sizeof);
                 logTrace("writing length of %d bytes to index %d", len, idx);
-                auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], len);
+                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], len);
                 assert(res == T.sizeof);
             }
 
             /// write some specific number
             void write(T v) nothrow pure @safe
             {
-                auto res = marshalFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
+                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
                 assert(res == T.sizeof);
             }
         }
@@ -794,12 +794,12 @@ protected:
 
     final int write(string s) pure @safe
     {
-        return wrappedMarsh((ubyte[] buf) => marshalStringField(buf, s));
+        return wrappedSerialize((ubyte[] buf) => serializeStringField(buf, s));
     }
 
     final int cwrite(string s) pure @safe
     {
-        return wrappedMarsh((ubyte[] buf) => marshalCstring(buf, s));
+        return wrappedSerialize((ubyte[] buf) => serializeCstring(buf, s));
     }
 
     /// read exactly one message from the socket
@@ -810,7 +810,7 @@ protected:
         read(type_and_length);
         res.type = cast(BackendMessageType) type_and_length[0];
         logTrace("Got message of type %s", res.type.to!string);
-        int length = demarshalNumber(cast(immutable(ubyte)[]) type_and_length[1..$]) - 4;
+        int length = deserializeNumber(cast(immutable(ubyte)[]) type_and_length[1..$]) - 4;
         enforce!PsqlClientException(length >= 0, "Negative message length");
         ubyte[] data;
         if (length > 0)
