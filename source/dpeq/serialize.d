@@ -199,6 +199,14 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         return s.length.to!int;
     }
 
+    int serializeBytesField(Dummy = void)(ubyte[] to, in ubyte[] val)
+    {
+        if (val.length > to.length)
+            return -2;
+        to[0..val.length] = val[];
+        return val.length.to!int;
+    }
+
     /// Service function, used for serializeling of protocol messages.
     /// Data strings are passed without trailing nulls.
     int serializeCstring(ubyte[] to, in string s)

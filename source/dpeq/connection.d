@@ -349,14 +349,12 @@ class PSQLConnection(
         cwrite(prepared);
 
         // parameter format code(s)
-        short fcodes = 0;
         auto fcodePrefix = reserveLen!short();
-        fcodePrefix.write(fcodes);
+        fcodePrefix.write(short(0));
 
         // parameters
-        short pcount = 0;
         auto pcountPrefix = reserveLen!short();
-        pcountPrefix.write(pcount);
+        pcountPrefix.write(short(0));
 
         // result format codes
         short rcount = 0;
@@ -369,6 +367,21 @@ class PSQLConnection(
         }
         rcolPrefix.write(rcount);
 
+        lenTotal.fill();
+        logTrace("Bind message buffered");
+    }
+
+    /// putBindMessage overload for already serialized parameters
+    final void putBindMessage(string portal, string prepared,
+        scope const(const(ubyte)[])[] rawChunks) pure @safe
+    {
+        ensureOpen();
+        write(cast(ubyte)FrontMessageType.Bind);
+        auto lenTotal = reserveLen();
+        cwrite(portal);
+        cwrite(prepared);
+        foreach (chunk; rawChunks)
+            bwrite(chunk);
         lenTotal.fill();
         logTrace("Bind message buffered");
     }
@@ -806,6 +819,11 @@ protected:
         Len l = Len(this, bufHead);
         bufHead += T.sizeof;
         return l;
+    }
+
+    final int bwrite(in ubyte[] s) pure @safe
+    {
+        return wrappedSerialize((ubyte[] buf) => serializeBytesField(buf, s));
     }
 
     final int write(in string s) pure @safe

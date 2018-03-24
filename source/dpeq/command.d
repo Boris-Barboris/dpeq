@@ -55,10 +55,10 @@ class PreparedStatement(ConnT)
     {
         const(OID)[] paramTypes;
         string query;
-        bool parseRequested;
         ConnT conn;
         string parsedName;  // name, reserved for this statement in PSQL connection
         short m_paramCount;
+        bool parseRequested;
     }
 
     /// name of this prepared statement, as seen by backend.
