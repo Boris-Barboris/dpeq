@@ -460,12 +460,28 @@ class PSQLConnection(
     }
 
     /// put Query message (simple query protocol) into the write buffer
-    final void putQueryMessage(string query) pure @safe
+    final void putQueryMessage(in string query) pure @safe
     {
         ensureOpen();
         write(cast(ubyte)FrontMessageType.Query);
         auto lenTotal = reserveLen();
         cwrite(query);
+        lenTotal.fill();
+        unflushedRfq++;
+        logTrace("Query message buffered");
+    }
+
+    /// ditto
+    final void putQueryMessage(in string[] queryChunks) pure @safe
+    {
+        ensureOpen();
+        write(cast(ubyte)FrontMessageType.Query);
+        auto lenTotal = reserveLen();
+        for (int i = 0; i < queryChunks.length; i++)
+            if (i == queryChunks.length - 1)
+                cwrite(queryChunks[i]);
+            else
+                write(queryChunks[i]);
         lenTotal.fill();
         unflushedRfq++;
         logTrace("Query message buffered");
@@ -792,12 +808,12 @@ protected:
         return l;
     }
 
-    final int write(string s) pure @safe
+    final int write(in string s) pure @safe
     {
         return wrappedSerialize((ubyte[] buf) => serializeStringField(buf, s));
     }
 
-    final int cwrite(string s) pure @safe
+    final int cwrite(in string s) pure @safe
     {
         return wrappedSerialize((ubyte[] buf) => serializeCstring(buf, s));
     }

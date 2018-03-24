@@ -228,7 +228,7 @@ struct QueryResult
     RowBlock[] blocks;
 
     /// returns true if there is not a single data row in the response.
-    @property bool noDataRows() const pure @safe
+    bool noDataRows() const pure @safe
     {
         foreach (block; blocks)
             if (block.dataRows.length > 0)
