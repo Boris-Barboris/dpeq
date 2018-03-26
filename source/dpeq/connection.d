@@ -88,29 +88,37 @@ class PSQLConnection(
         const BackendParams m_backendParams;
     }
 
-    /// Backend parameters this connection was constructed from
-    final @property ref const(BackendParams) backendParams() const pure @safe
+    final @property pure @safe nothrow
     {
-        return m_backendParams;
+
+        /// Backend parameters this connection was constructed from
+        ref const(BackendParams) backendParams() const
+        {
+            return m_backendParams;
+        }
+
+        /// Backend process ID. Used in CancelRequest message.
+        int processId() const { return m_processId; }
+
+        /// Cancellation secret. Used in CancelRequest message.
+        int cancellationKey() const { return m_cancellationKey; }
+
+        /// Socket getter.
+        SocketT socket() { return m_socket; }
+
+        /// Number of ReadyForQuery messages that are yet to be received
+        /// from the backend. May be useful for checking wether getQueryResults
+        /// would block forever.
+        int expectedRFQCount() const { return readyForQueryExpected; }
+
+        /// Transaction status, reported by the last received ReadyForQuery message.
+        /// For a new connection TransactionStatus.IDLE is returned.
+        TransactionStatus transactionStatus() const { return tstatus; }
+
+        /// Connection is open when it is authorized and socket was alive last time
+        /// it was checked.
+        bool isOpen() const { return open; }
     }
-
-    /// Backend process ID. Used in CancelRequest message.
-    final @property int processId() const pure @safe { return m_processId; }
-
-    /// Cancellation secret. Used in CancelRequest message.
-    final @property int cancellationKey() const pure @safe { return m_cancellationKey; }
-
-    /// Socket getter.
-    final @property SocketT socket() pure @safe { return m_socket; }
-
-    /// Number of ReadyForQuery messages that are yet to be received
-    /// from the backend. May be useful for checking wether getQueryResults
-    /// would block forever.
-    final @property int expectedRFQCount() const pure @safe { return readyForQueryExpected; }
-
-    /// Transaction status, reported by the last received ReadyForQuery message.
-    /// For a new connection TransactionStatus.IDLE is returned.
-    final @property TransactionStatus transactionStatus() const pure @safe { return tstatus; }
 
     invariant
     {
@@ -119,18 +127,14 @@ class PSQLConnection(
         assert(bufHead >= 0);
     }
 
-    /// Connection is open when it is authorized and socket was alive last time
-    /// it was checked.
-    final @property bool isOpen() const pure @safe { return open; }
-
     /// Generate next connection-unique prepared statement name.
-    final string getNewPreparedName() pure @safe
+    final string getNewPreparedName() pure @safe nothrow
     {
         return (preparedCounter++).to!string;
     }
 
     /// Generate next connection-unique portal name.
-    final string getNewPortalName() pure @safe
+    final string getNewPortalName() pure @safe nothrow
     {
         return (portalCounter++).to!string;
     }
@@ -218,7 +222,7 @@ class PSQLConnection(
     }
 
     /// discard write buffer content
-    final void discard() pure @safe
+    final void discard() pure nothrow @safe
     {
         bufHead = 0;
         unflushedRfq = 0;
@@ -226,15 +230,15 @@ class PSQLConnection(
 
     /// Save write buffer cursor in order to be able to restore it in case of errors.
     /// Use it to prevent sending junk to backend when something goes wrong during
-    /// deserialization or message creation.
-    final auto saveBuffer() pure @safe
+    /// serialization or message creation.
+    final auto saveBuffer() pure nothrow @safe
     {
         static struct WriteCursor
         {
             private int savedHead;
             private int savedUnflushedRfq;
             PSQLConnection conn;
-            void restore() @safe
+            void restore() pure nothrow @safe
             {
                 assert(conn.bufHead >= savedHead);
                 conn.bufHead = savedHead;
@@ -243,12 +247,6 @@ class PSQLConnection(
             }
         }
         return WriteCursor(bufHead, unflushedRfq, this);
-    }
-
-    pragma(inline)
-    final void ensureOpen() const pure @safe
-    {
-        enforce!PsqlConnectionClosedException(open, "Connection is not open");
     }
 
 
@@ -296,7 +294,10 @@ class PSQLConnection(
     //    isInputRange!RR && is(Unqual!(ElementType!RR) == FormatCode) &&
     //    isInputRange!PR && __traits(compiles, -1 == parameters.front()(new ubyte[2]))
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Bind);
         auto lenTotal = reserveLen();
         cwrite(portal);
@@ -342,23 +343,19 @@ class PSQLConnection(
     }
 
     /// putBindMessage overload for parameterless portals
-    final void putBindMessage(RR)
-        (string portal, string prepared, scope RR resultFormatCodes) pure @safe
+    final void putBindMessage(RR)(string portal, string prepared,
+        scope RR resultFormatCodes) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Bind);
         auto lenTotal = reserveLen();
         cwrite(portal);
         cwrite(prepared);
-
-        // parameter format code(s)
-        auto fcodePrefix = reserveLen!short();
-        fcodePrefix.write(short(0));
-
-        // parameters
-        auto pcountPrefix = reserveLen!short();
-        pcountPrefix.write(short(0));
-
+        write(short(0));
+        write(short(0));
         // result format codes
         short rcount = 0;
         auto rcolPrefix = reserveLen!short();
@@ -378,7 +375,10 @@ class PSQLConnection(
     final void putBindMessage(string portal, string prepared,
         scope const(const(ubyte)[])[] rawChunks) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Bind);
         auto lenTotal = reserveLen();
         cwrite(portal);
@@ -394,8 +394,11 @@ class PSQLConnection(
     /// 'P' for portal.
     final void putCloseMessage(StmtOrPortal closeWhat, string name) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
         assert(closeWhat == 'S' || closeWhat == 'P');
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Close);
         auto lenTotal = reserveLen();
         write(cast(ubyte)closeWhat);
@@ -409,8 +412,11 @@ class PSQLConnection(
     /// 'P' for portal.
     final void putDescribeMessage(StmtOrPortal descWhat, string name) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
         assert(descWhat == 'S' || descWhat == 'P');
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Describe);
         auto lenTotal = reserveLen();
         write(cast(ubyte)descWhat);
@@ -424,7 +430,10 @@ class PSQLConnection(
     currently not handled by dpeq commands */
     final void putExecuteMessage(string portal = "", int maxRows = 0) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Execute);
         auto lenTotal = reserveLen();
         cwrite(portal);
@@ -442,20 +451,21 @@ class PSQLConnection(
     commands. Without Flush, messages returned by the backend will be combined
     into the minimum possible number of packets to minimize network overhead."
     */
-    final void putFlushMessage() pure @safe
+    final void putFlushMessage() pure nothrow @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
         write(cast(ubyte)FrontMessageType.Flush);
         write(4);
         logTrace("Flush message buffered");
     }
 
-    final void putParseMessage(PR)(string prepared, string query, scope PR ptypes) pure @safe
-        if (isInputRange!PR && is(Unqual!(ElementType!PR) == OID))
+    final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
+        pure @safe if (isInputRange!PR && is(Unqual!(ElementType!PR) == OID))
     {
-        logTrace("Message to parse query: %s", query);
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
 
-        ensureOpen();
         write(cast(ubyte)FrontMessageType.Parse);
         auto lenTotal = reserveLen();
         cwrite(prepared);
@@ -478,7 +488,10 @@ class PSQLConnection(
     /// put Query message (simple query protocol) into the write buffer
     final void putQueryMessage(in string query) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Query);
         auto lenTotal = reserveLen();
         cwrite(query);
@@ -490,7 +503,10 @@ class PSQLConnection(
     /// ditto
     final void putQueryMessage(in string[] queryChunks) pure @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.Query);
         auto lenTotal = reserveLen();
         for (int i = 0; i < queryChunks.length; i++)
@@ -509,9 +525,9 @@ class PSQLConnection(
     Put Sync message into write buffer. Usually you should call this after
     every portal execute message.
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
-    final void putSyncMessage() pure @safe
+    final void putSyncMessage() pure nothrow @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
         write(cast(ubyte)FrontMessageType.Sync);
         write(4);
         unflushedRfq++;
@@ -625,6 +641,9 @@ protected:
 
     final void putStartupMessage(in BackendParams params) pure @safe
     {
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         auto lenPrefix = reserveLen();
         write(0x0003_0000);  // protocol v3
         cwrite("user");
@@ -636,9 +655,10 @@ protected:
         logTrace("Startup message buffered");
     }
 
-    final void putTerminateMessage() pure @safe
+    final void putTerminateMessage() pure nothrow @safe
     {
-        ensureOpen();
+        assert(open, "Connection is not open");
+
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
         logTrace("Terminate message buffered");
@@ -716,6 +736,9 @@ protected:
 
     final void putPasswordMessage(string pw) pure @safe
     {
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         write(cast(ubyte)FrontMessageType.PasswordMessage);
         auto lenPrefix = reserveLen();
         cwrite(pw);
@@ -726,6 +749,9 @@ protected:
 
     final void putMd5PasswordMessage(string pw, string user, ubyte[4] salt) pure @trusted
     {
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
         // thank you ddb authors
         char[32] MD5toHex(T...)(in T data)
         {
@@ -763,14 +789,14 @@ protected:
     }
 
     /// extends writeBuffer if serializer 'm' is lacking space (returns -2)
-    final int wrappedSerialize(SerialT)(scope SerialT m) pure @trusted
+    final int wrappedSerialize(SerialT)(scope SerialT m) pure nothrow @trusted
         if (isCallable!SerialT)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
         while (bcount <= -2)
         {
             // reallocate with additional 4 pages
-            int deficit = -bcount - (writeBuffer.length.to!int - bufHead);
+            int deficit = -bcount - (cast(int) writeBuffer.length - bufHead);
             assert(deficit > 0, "negative buffer deficit");
             writeBuffer.length = writeBuffer.length + max(4 * 4096, deficit);
             bcount = m(writeBuffer[bufHead .. $]);
@@ -781,7 +807,7 @@ protected:
     }
 
     /// write numeric type T to write buffer
-    final int write(T)(T val) pure @safe
+    final int write(T)(T val) pure nothrow @safe
         if (isNumeric!T)
     {
         return wrappedSerialize((ubyte[] buf) => serializeFixedField(buf, &val));
@@ -826,17 +852,17 @@ protected:
         return l;
     }
 
-    final int bwrite(scope const ubyte[] s) pure @safe
+    final int bwrite(scope const ubyte[] s) pure nothrow @safe
     {
         return wrappedSerialize((ubyte[] buf) => serializeBytesField(buf, &s));
     }
 
-    final int write(in string s) pure @safe
+    final int write(in string s) pure nothrow @safe
     {
         return wrappedSerialize((ubyte[] buf) => serializeStringField(buf, &s));
     }
 
-    final int cwrite(in string s) pure @safe
+    final int cwrite(in string s) pure nothrow @safe
     {
         return wrappedSerialize((ubyte[] buf) => serializeCstring(buf, s));
     }

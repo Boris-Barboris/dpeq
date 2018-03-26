@@ -211,12 +211,12 @@ class Portal(ConnT)
 
         enum fcodesr = [staticMap!(FCodeOfFSpec!(Serializer).F, aliasSeqOf!specs)];
 
-        alias DlgT = int delegate(ubyte[]) pure @system;
+        alias DlgT = int delegate(ubyte[]) pure nothrow @system;
         DlgT[specs.length] serializers;
         foreach(i, paramSpec; aliasSeqOf!specs)
         {
             serializers[i] =
-                (ubyte[] to) pure => Serializer!paramSpec.serialize(to, &args[i]);
+                (ubyte[] to) pure nothrow => Serializer!paramSpec.serialize(to, &args[i]);
         }
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
             serializers, resCodes);
@@ -255,7 +255,7 @@ class Portal(ConnT)
             const Nullable!string str;
             this(const(Nullable!string) v) { str = v; }
 
-            int opCall(ubyte[] buf) const
+            int opCall(ubyte[] buf) nothrow const
             {
                 return serializeNullableStringField(buf, &str);
             }

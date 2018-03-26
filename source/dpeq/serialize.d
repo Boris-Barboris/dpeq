@@ -39,7 +39,8 @@ is null, and -2 if 'to' is too small.
 If result is less than -2, absolute value is the amount of bytes that is
 required to fully serialize the value.
 */
-alias SerializeF = int function(scope ubyte[] to, scope const void* val) pure @system;
+alias SerializeF = int function(scope ubyte[] to, scope const void* val)
+    nothrow pure @system;
 
 /**
 Deserializing function reads 'len' bytes and writes the conversion result to the
@@ -172,11 +173,11 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
 ///////////////////////////////////////////////////////////////////////////
 */
 
-@safe pure
+@safe pure nothrow
 {
 
     pragma(inline, true)
-    int serializeNull(scope ubyte[] to) nothrow
+    int serializeNull(scope ubyte[] to)
     {
         return -1;  // special case, -1 length is null value in eq protocol.
     }
@@ -184,15 +185,15 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
     // I don't really know how versatile are these functions, so let's keep
     // them FixedField instead of NumericField
 
-    int serializeNullableFixedField(T)(scope ubyte[] to, scope const(Nullable!T)* ptr)
-        @trusted nothrow
+    int serializeNullableFixedField(T)(scope ubyte[] to,
+        scope const(Nullable!T)* ptr) @trusted
     {
         if (ptr.isNull)
             return serializeNull(to);
         return serializeFixedField!T(to, &(ptr.get()));
     }
 
-    int serializeFixedField(T)(scope ubyte[] to, scope const T* val) nothrow
+    int serializeFixedField(T)(scope ubyte[] to, scope const T* val)
     {
         if (T.sizeof > to.length)
             return -2;
@@ -201,52 +202,61 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         return arr.length;
     }
 
-    int serializeNullableStringField(Dummy = void)(scope ubyte[] to, scope const(Nullable!string)* val)
-        @trusted
+    int serializeNullableStringField(Dummy = void)(scope ubyte[] to,
+        scope const(Nullable!string)* val) @trusted
     {
         if (val.isNull)
             return serializeNull(to);
         return serializeStringField(to, &(val.get()));
     }
 
-    int serializeStringField(Dummy = void)(scope ubyte[] to, scope const string* val)
+    int serializeStringField(Dummy = void)(scope ubyte[] to,
+        scope const string* val)
     {
+        if (val.length > int.max - 1)
+            assert(0, "string too long");
         if (val.length > to.length)
             return min(-2, -val.length);
         for (int i = 0; i < val.length; i++)
             to[i] = cast(const(ubyte)) (*val)[i];
-        return val.length.to!int;
+        return cast(int) val.length;
     }
 
-    int serializeBytesField(Dummy = void)(scope ubyte[] to, scope const(ubyte[])* val)
+    int serializeBytesField(Dummy = void)(scope ubyte[] to,
+        scope const(ubyte[])* val)
     {
+        if (val.length > int.max - 1)
+            assert(0, "array too long");
         if (val.length > to.length)
             return min(-2, -val.length);
         to[0..val.length] = (*val)[];
-        return val.length.to!int;
+        return cast(int) val.length;
     }
 
     /// Service function, used for serializeling of protocol messages.
     /// Data strings are passed without trailing nulls.
     int serializeCstring(scope ubyte[] to, scope const string s)
     {
+        if (s.length + 1 > int.max - 1)
+            assert(0, "string too long");
         if (s.length + 1 > to.length)
             return min(-2, -s.length);
         for (int i = 0; i < s.length; i++)
             to[i] = cast(const(ubyte)) s[i];
         to[s.length] = cast(ubyte)0;
-        return (s.length + 1).to!int;
+        return cast(int)(s.length + 1);
     }
 
-    int serializeNullableUuidField(Dummy = void)(scope ubyte[] to, scope const(Nullable!UUID)* val)
-        @trusted nothrow
+    int serializeNullableUuidField(Dummy = void)(scope ubyte[] to,
+        scope const(Nullable!UUID)* val) @trusted
     {
         if (val.isNull)
             return serializeNull(to);
         return serializeUuidField(to, &(val.get()));
     }
 
-    int serializeUuidField(Dummy = void)(scope ubyte[] to, scope const UUID* val) nothrow
+    int serializeUuidField(Dummy = void)(scope ubyte[] to,
+        scope const UUID* val)
     {
         if (to.length < 16)
             return -2;
