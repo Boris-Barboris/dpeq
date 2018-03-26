@@ -325,7 +325,6 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         if (val is null)
             assert(0, "null value pointer");
         enforce!PsqlSerializationException(len != -1, "null in non-null deserializer");
-        enforce!PsqlSerializationException(fc == FormatCode.Text, "non-text string format");
         if (len == 0)
         {
             *val = "";
