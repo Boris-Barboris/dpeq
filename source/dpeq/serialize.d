@@ -300,7 +300,8 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         else if (fCode == FormatCode.Text)
             *val = deserializeString(from[0 .. len]).to!T;
         else
-            throw new PsqlSerializationException("Unsupported FormatCode");
+            throw new PsqlSerializationException(
+                "Unsupported FormatCode " ~ short(fCode).to!string);
     }
 
     void deserializeNullableFixedField(T)(scope immutable(ubyte)[] from,
@@ -324,7 +325,7 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         if (val is null)
             assert(0, "null value pointer");
         enforce!PsqlSerializationException(len != -1, "null in non-null deserializer");
-        enforce!PsqlSerializationException(fc == FormatCode.Text, "binary string");
+        enforce!PsqlSerializationException(fc == FormatCode.Text, "non-text string format");
         if (len == 0)
         {
             *val = "";
@@ -406,7 +407,8 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
             *val = UUID(s);
         }
         else
-            throw new PsqlSerializationException("Unsupported FormatCode");
+            throw new PsqlSerializationException(
+                "Unsupported FormatCode " ~ short(fc).to!string);
     }
 
 }

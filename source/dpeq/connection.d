@@ -37,8 +37,8 @@ struct BackendParams
 
 enum StmtOrPortal: char
 {
-    Statement = 'S',
-    Portal = 'P'
+    statement = 'S',
+    portal = 'P'
 }
 
 // When the client code is uninterested in dpeq connection logging.

@@ -121,7 +121,7 @@ class PreparedStatement(ConnT)
     {
         assert(parseRequested, "prepared statement was never sent to backend");
         assert(parsedName.length, "no need to close unnamed prepared statements");
-        conn.putCloseMessage(StmtOrPortal.Statement, parsedName);
+        conn.putCloseMessage(StmtOrPortal.statement, parsedName);
         parseRequested = false;
     }
 
@@ -293,7 +293,7 @@ class Portal(ConnT)
     {
         assert(bindRequested, "portal was never bound");
         assert(portalName.length, "no need to close unnamed portals");
-        conn.putCloseMessage(StmtOrPortal.Portal, portalName);
+        conn.putCloseMessage(StmtOrPortal.portal, portalName);
         bindRequested = false;
     }
 
@@ -328,7 +328,7 @@ class Portal(ConnT)
     {
         assert(bindRequested, "Portal was never bound");
         if (describe)
-            conn.putDescribeMessage(StmtOrPortal.Portal, portalName);
+            conn.putDescribeMessage(StmtOrPortal.portal, portalName);
         conn.putExecuteMessage(portalName, maxRows);
     }
 }
