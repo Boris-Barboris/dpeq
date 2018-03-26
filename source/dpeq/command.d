@@ -211,12 +211,12 @@ class Portal(ConnT)
 
         enum fcodesr = [staticMap!(FCodeOfFSpec!(Serializer).F, aliasSeqOf!specs)];
 
-        alias DlgT = int delegate(ubyte[]) pure @safe;
+        alias DlgT = int delegate(ubyte[]) pure @system;
         DlgT[specs.length] serializers;
         foreach(i, paramSpec; aliasSeqOf!specs)
         {
             serializers[i] =
-                (ubyte[] to) => Serializer!paramSpec.serialize(to, args[i]);
+                (ubyte[] to) pure => Serializer!paramSpec.serialize(to, &args[i]);
         }
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
             serializers, resCodes);
@@ -257,7 +257,7 @@ class Portal(ConnT)
 
             int opCall(ubyte[] buf) const
             {
-                return serializeNullableStringField(buf, str);
+                return serializeNullableStringField(buf, &str);
             }
         }
 
@@ -638,7 +638,7 @@ auto blockToTuples
             len = deserializeNumber(from[0 .. 4]);
             //writeln("col ", i, ", len = ", len, " from = ", from);
             vbuf = from[4 .. max(4, len + 4)];
-            res[i] = Deserializer!(colSpec).deserialize(vbuf, fcodes[i], len);
+            Deserializer!(colSpec).deserialize(vbuf, fcodes[i], len, &res[i]);
             from = from[max(4, len + 4) .. $];
         }
         enforce!PsqlSerializationException(from.length == 0,
@@ -716,7 +716,7 @@ auto blockToTuples
             //writeln("col ", i, ", len = ", len, " from = ", from);
             vbuf = from[4 .. max(4, len + 4)];
             FormatCode fcode = FCodeOfFSpec!(Deserializer).F!(colSpec);
-            res[i] = Deserializer!(colSpec).deserialize(vbuf, fcode, len);
+            Deserializer!(colSpec).deserialize(vbuf, fcode, len, &res[i]);
             from = from[max(4, len + 4) .. $];
         }
         enforce!PsqlSerializationException(from.length == 0,

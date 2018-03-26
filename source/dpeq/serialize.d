@@ -8,7 +8,7 @@ Authors: Boris-Barboris
 
 module dpeq.serialize;
 
-import std.algorithm: canFind;
+import std.algorithm: canFind, min;
 import std.exception: enforce;
 import std.bitmanip: nativeToBigEndian, bigEndianToNative;
 import std.conv: to;
@@ -32,6 +32,23 @@ struct FieldSpec
 }
 
 
+/**
+Serializing function converts value pointed to by val to PSQL network protocol format,
+writing it to byte buffer 'to' and returning number of bytes written, -1 if the value
+is null, and -2 if 'to' is too small.
+If result is less than -2, absolute value is the amount of bytes that is
+required to fully serialize the value.
+*/
+alias SerializeF = int function(scope ubyte[] to, scope const void* val) pure @system;
+
+/**
+Deserializing function reads 'len' bytes and writes the conversion result to the
+value, pointed by 'val'.
+*/
+alias DeserializeF = void function(immutable(ubyte)[] from, in FormatCode fc,
+    in int len, scope void* val) pure @system;
+
+
 /** Default compile-time one-to-many mapper, wich for OID of some Postgres type
 * gives it's native type representation, and serializing and deserializing
 * functions. You can extend it with two custom mappers: Pre and Post. */
@@ -44,28 +61,28 @@ template DefaultSerializer(FieldSpec field, alias Pre = NopSerializer,
         alias type = Pre!field.type;
 
         // default format code for this type
-        enum formatCode = Pre!field.formatCode;
+        enum FormatCode formatCode = Pre!field.formatCode;
 
         // deserializer should accept all formatCodes that make sense for this
         // type, and it must throw in unhandled case.
-        alias deserialize = Pre!field.deserialize;
+        immutable DeserializeF deserialize = cast(DeserializeF) &Pre!field.deserialize;
 
         // serializer only needs to support one formatCode, mentioned above
-        alias serialize = Pre!field.serialize;
+        immutable SerializeF serialize = cast(SerializeF) &Pre!field.serialize;
     }
     else static if (StaticFieldSerializer!field.canDigest)
     {
         alias type = StaticFieldSerializer!field.type;
-        enum formatCode = StaticFieldSerializer!field.formatCode;
-        alias deserialize = StaticFieldSerializer!field.deserialize;
-        alias serialize = StaticFieldSerializer!field.serialize;
+        enum FormatCode formatCode = StaticFieldSerializer!field.formatCode;
+        immutable DeserializeF deserialize = cast(DeserializeF) &StaticFieldSerializer!field.deserialize;
+        immutable SerializeF serialize = cast(SerializeF) &StaticFieldSerializer!field.serialize;
     }
     else static if (Post!field.canDigest)
     {
         alias type = Post!field.type;
-        enum formatCode = Post!field.formatCode;
-        alias deserialize = Post!field.deserialize;
-        alias serialize = Post!field.serialize;
+        enum FormatCode formatCode = Post!field.formatCode;
+        immutable DeserializeF deserialize = cast(DeserializeF) &Post!field.deserialize;
+        immutable SerializeF serialize = cast(SerializeF) &Post!field.serialize;
     }
     else
         static assert(0, "Unknown typeId " ~ field.typeId.to!string ~
@@ -116,7 +133,7 @@ template StaticFieldSerializer(FieldSpec field)
 mixin template SerialTemplate(NativeT, FormatCode fcode, string suffix)
 {
     enum canDigest = true;
-    enum formatCode = fcode;
+    enum FormatCode formatCode = fcode;
     static if (field.nullable)
     {
         alias type = Nullable!NativeT;
@@ -159,7 +176,7 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
 {
 
     pragma(inline, true)
-    int serializeNull(ubyte[] to) nothrow
+    int serializeNull(scope ubyte[] to) nothrow
     {
         return -1;  // special case, -1 length is null value in eq protocol.
     }
@@ -167,66 +184,69 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
     // I don't really know how versatile are these functions, so let's keep
     // them FixedField instead of NumericField
 
-    int serializeNullableFixedField(T)(ubyte[] to, in Nullable!T ptr) nothrow
+    int serializeNullableFixedField(T)(scope ubyte[] to, scope const(Nullable!T)* ptr)
+        @trusted nothrow
     {
         if (ptr.isNull)
             return serializeNull(to);
-        return serializeFixedField!T(to, ptr.get);
+        return serializeFixedField!T(to, &(ptr.get()));
     }
 
-    int serializeFixedField(T)(ubyte[] to, in T val) nothrow
+    int serializeFixedField(T)(scope ubyte[] to, scope const T* val) nothrow
     {
         if (T.sizeof > to.length)
             return -2;
-        auto arr = nativeToBigEndian!T(val);
+        auto arr = nativeToBigEndian!T(*val);
         to[0 .. arr.length] = arr;
         return arr.length;
     }
 
-    int serializeNullableStringField(Dummy = void)(ubyte[] to, in Nullable!string val)
+    int serializeNullableStringField(Dummy = void)(scope ubyte[] to, scope const(Nullable!string)* val)
+        @trusted
     {
         if (val.isNull)
             return serializeNull(to);
-        return serializeStringField(to, val.get);
+        return serializeStringField(to, &(val.get()));
     }
 
-    int serializeStringField(Dummy = void)(ubyte[] to, in string s)
-    {
-        if (s.length > to.length)
-            return -2;
-        for (int i = 0; i < s.length; i++)
-            to[i] = cast(const(ubyte)) s[i];
-        return s.length.to!int;
-    }
-
-    int serializeBytesField(Dummy = void)(ubyte[] to, in ubyte[] val)
+    int serializeStringField(Dummy = void)(scope ubyte[] to, scope const string* val)
     {
         if (val.length > to.length)
-            return -2;
-        to[0..val.length] = val[];
+            return min(-2, -val.length);
+        for (int i = 0; i < val.length; i++)
+            to[i] = cast(const(ubyte)) (*val)[i];
+        return val.length.to!int;
+    }
+
+    int serializeBytesField(Dummy = void)(scope ubyte[] to, scope const(ubyte[])* val)
+    {
+        if (val.length > to.length)
+            return min(-2, -val.length);
+        to[0..val.length] = (*val)[];
         return val.length.to!int;
     }
 
     /// Service function, used for serializeling of protocol messages.
     /// Data strings are passed without trailing nulls.
-    int serializeCstring(ubyte[] to, in string s)
+    int serializeCstring(scope ubyte[] to, scope const string s)
     {
         if (s.length + 1 > to.length)
-            return -2;
+            return min(-2, -s.length);
         for (int i = 0; i < s.length; i++)
             to[i] = cast(const(ubyte)) s[i];
         to[s.length] = cast(ubyte)0;
         return (s.length + 1).to!int;
     }
 
-    int serializeNullableUuidField(Dummy = void)(ubyte[] to, in Nullable!UUID val) nothrow
+    int serializeNullableUuidField(Dummy = void)(scope ubyte[] to, scope const(Nullable!UUID)* val)
+        @trusted nothrow
     {
         if (val.isNull)
             return serializeNull(to);
-        return serializeUuidField(to, val.get);
+        return serializeUuidField(to, &(val.get()));
     }
 
-    int serializeUuidField(Dummy = void)(ubyte[] to, in UUID val) nothrow
+    int serializeUuidField(Dummy = void)(scope ubyte[] to, scope const UUID* val) nothrow
     {
         if (to.length < 16)
             return -2;
@@ -247,9 +267,9 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
 @safe pure
 {
 
-    /// Simple deserialize of some numeric type.
+    /// Service function. Simple deserialize of some numeric type.
     pragma(inline)
-    T deserializeNumber(T = int)(immutable(ubyte)[] from) nothrow
+    T deserializeNumber(T = int)(scope immutable(ubyte)[] from) nothrow
         if (isNumeric!T)
     {
         return bigEndianToNative!T(from[0 .. T.sizeof]);
@@ -265,46 +285,68 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         throw new PsqlSerializationException("Unable to deserialize bool from string " ~ s);
     }
 
-    T deserializeFixedField(T)(immutable(ubyte)[] from, in FormatCode fCode, in int len)
+    void deserializeFixedField(T)(scope immutable(ubyte)[] from, in FormatCode fCode,
+        in int len, scope T* val)
     {
-        enforce!PsqlSerializationException(len != -1, "null in not-null deserializer");
+        if (val is null)
+            assert(0, "null value pointer");
+        enforce!PsqlSerializationException(len != -1, "null in non-null deserializer");
         enforce!PsqlSerializationException(len > 0, "zero-sized fixed field");
         if (fCode == FormatCode.Binary)
         {
             enforce!PsqlSerializationException(len == T.sizeof, "Field size mismatch");
-            return bigEndianToNative!T(from[0 .. T.sizeof]);
+            *val = bigEndianToNative!T(from[0 .. T.sizeof]);
         }
         else if (fCode == FormatCode.Text)
-            return deserializeString(from[0 .. len]).to!T;
+            *val = deserializeString(from[0 .. len]).to!T;
         else
             throw new PsqlSerializationException("Unsupported FormatCode");
     }
 
-    Nullable!T deserializeNullableFixedField(T)
-        (immutable(ubyte)[] from, in FormatCode fCode, in int len)
+    void deserializeNullableFixedField(T)(scope immutable(ubyte)[] from,
+        in FormatCode fCode, in int len, scope Nullable!T *val) @trusted
     {
+        if (val is null)
+            assert(0, "null value pointer");
         if (len == -1)
-            return Nullable!T();
-        return Nullable!T(deserializeFixedField!T(from, fCode, len));
+        {
+            *val = Nullable!T();
+            return;
+        }
+        T res;
+        deserializeFixedField!T(from, fCode, len, &res);
+        *val = Nullable!T(res);
     }
 
-    string deserializeStringField(Dummy = void)
-        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    void deserializeStringField(Dummy = void)(immutable(ubyte)[] from,
+        in FormatCode fc, in int len, scope string* val)
     {
-        enforce!PsqlSerializationException(len != -1, "null in not-null deserializer");
+        if (val is null)
+            assert(0, "null value pointer");
+        enforce!PsqlSerializationException(len != -1, "null in non-null deserializer");
         enforce!PsqlSerializationException(fc == FormatCode.Text, "binary string");
         if (len == 0)
-            return "";
-        return cast(string) from[0 .. len.to!size_t];
+        {
+            *val = "";
+            return;
+        }
+        *val =  cast(string) from[0 .. len.to!size_t];
     }
 
     /// returns inplace-constructed string without allocations. Hacky.
-    Nullable!string deserializeNullableStringField(Dummy = void)
-        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    void deserializeNullableStringField(Dummy = void)(immutable(ubyte)[] from,
+        in FormatCode fc, in int len, scope Nullable!string *val) @trusted
     {
+        if (val is null)
+            assert(0, "null value pointer");
         if (len == -1)
-            return Nullable!string();
-        return Nullable!string(deserializeStringField(from, fc, len));
+        {
+            *val = Nullable!string();
+            return;
+        }
+        string res;
+        deserializeStringField(from, fc, len, &res);
+        *val = Nullable!string(res);
     }
 
     /// dpeq utility function
@@ -330,29 +372,38 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
         return deserializeString(from[0..l]);
     }
 
-    Nullable!UUID deserializeNullableUuidField(Dummy = void)
-        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    void deserializeNullableUuidField(Dummy = void)(scope immutable(ubyte)[] from,
+        in FormatCode fc, in int len, scope Nullable!UUID *val) @trusted
     {
+        if (val is null)
+            assert(0, "null value pointer");
         if (len == -1)
-            return Nullable!UUID();
-        return Nullable!UUID(deserializeUuidField(from, fc, len));
+        {
+            *val = Nullable!UUID();
+            return;
+        }
+        UUID res;
+        deserializeUuidField(from, fc, len, &res);
+        *val = Nullable!UUID(res);
     }
 
-    UUID deserializeUuidField(Dummy = void)
-        (immutable(ubyte)[] from, in FormatCode fc, in int len)
+    void deserializeUuidField(Dummy = void)(scope immutable(ubyte)[] from,
+        in FormatCode fc, in int len, scope UUID* val)
     {
+        if (val is null)
+            assert(0, "null value pointer");
         enforce!PsqlSerializationException(len != -1,
             "null uuid in non-null deserializer");
         if (fc == FormatCode.Binary)
         {
             enforce!PsqlSerializationException(len == 16, "uuid is not 16-byte");
             ubyte[16] data = from[0..16];
-            return UUID(data);
+            *val =  UUID(data);
         }
         else if (fc == FormatCode.Text)
         {
-            string val = cast(string) from[0 .. len.to!size_t];
-            return UUID(val);
+            string s = cast(string) from[0 .. len.to!size_t];
+            *val = UUID(s);
         }
         else
             throw new PsqlSerializationException("Unsupported FormatCode");
@@ -369,7 +420,7 @@ template FSpecsToFCodes(FieldSpec[] specs, alias Serializer = DefaultSerializer)
 
 /// prototype of a nullable variant deserializer, used in converter
 alias VariantDeserializer =
-    NullableVariant function(immutable(ubyte)[] buf, in FormatCode fc, in int len) @system;
+    NullableVariant function(scope immutable(ubyte)[] buf, in FormatCode fc, in int len) @trusted;
 
 /// std.variant.Variant subtype that is better suited for holding SQL null.
 /// Null NullableVariant is essentially a valueless Variant instance.
@@ -409,18 +460,8 @@ unittest
     assert(nv.isNull);
 }
 
-NullableVariant wrapToVariant(alias f)
-    (immutable(ubyte)[] buf, in FormatCode fc, in int len) @system
-{
-    auto nullableResult = f(buf, fc, len);
-    if (nullableResult.isNull)
-        return NullableVariant();
-    else
-        return NullableVariant(nullableResult.get);
-}
-
 /// Default converter hash map. You can extend it, or define your own.
-abstract class VariantConverter(alias Serzer = DefaultFieldSerializer)
+abstract class VariantConverter(alias Serializer = DefaultFieldSerializer)
 {
     static immutable VariantDeserializer[OID] deserializers;
 
@@ -436,7 +477,17 @@ abstract class VariantConverter(alias Serzer = DefaultFieldSerializer)
             // of some native type.
             enum FieldSpec spec =
                 FieldSpec(__traits(getMember, StaticPgTypes, em), true);
-            aa[spec.typeId] = &wrapToVariant!(Serzer!spec.deserialize);
+            alias NullableT = Serializer!spec.type;
+            aa[spec.typeId] =
+                (scope immutable(ubyte)[] buf, in FormatCode fc, in int len) @trusted
+                {
+                    NullableT result;
+                    Serializer!spec.deserialize(buf, fc, len, &result);
+                    if (result.isNull)
+                        return NullableVariant();
+                    else
+                        return NullableVariant(result.get());
+                };
         }
         deserializers = cast(immutable VariantDeserializer[OID]) aa;
     }

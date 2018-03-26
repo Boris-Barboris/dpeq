@@ -10,6 +10,7 @@ module dpeq.connection;
 
 import core.time: seconds, Duration;
 
+import std.algorithm: max;
 import std.exception: enforce;
 import std.conv: to;
 import std.traits;
@@ -180,10 +181,12 @@ class PSQLConnection(
     {
         SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port, seconds(5));
         ubyte[4 * 4] intBuf;
-        serializeFixedField(intBuf[0..4], int(16));
-        serializeFixedField(intBuf[4..8], int(80877102));
-        serializeFixedField(intBuf[8..12], m_processId);
-        serializeFixedField(intBuf[12..16], m_cancellationKey);
+        static immutable int pn1 = 16;
+        serializeFixedField(intBuf[0..4], &pn1);
+        static immutable int pn2 = int(80877102);
+        serializeFixedField(intBuf[4..8], &pn2);
+        serializeFixedField(intBuf[8..12], &m_processId);
+        serializeFixedField(intBuf[12..16], &m_cancellationKey);
         sock.send(intBuf[]);
         sock.close();
     }
@@ -760,14 +763,16 @@ protected:
     }
 
     /// extends writeBuffer if serializer 'm' is lacking space (returns -2)
-    final int wrappedSerialize(SerialT)(scope SerialT m) pure @safe
+    final int wrappedSerialize(SerialT)(scope SerialT m) pure @trusted
         if (isCallable!SerialT)
     {
         int bcount = m(writeBuffer[bufHead .. $]);
-        while (bcount == -2)
+        while (bcount <= -2)
         {
             // reallocate with additional 4 pages
-            writeBuffer.length = writeBuffer.length + 4 * 4096;
+            int deficit = -bcount - (writeBuffer.length.to!int - bufHead);
+            assert(deficit > 0, "negative buffer deficit");
+            writeBuffer.length = writeBuffer.length + max(4 * 4096, deficit);
             bcount = m(writeBuffer[bufHead .. $]);
         }
         if (bcount > 0)
@@ -776,10 +781,10 @@ protected:
     }
 
     /// write numeric type T to write buffer
-    final int write(T)(T val) pure @safe nothrow
+    final int write(T)(T val) pure @safe
         if (isNumeric!T)
     {
-        return wrappedSerialize((ubyte[] buf) => serializeFixedField(buf, val));
+        return wrappedSerialize((ubyte[] buf) => serializeFixedField(buf, &val));
     }
 
     /// Reserve space in write buffer for length prefix and return
@@ -793,7 +798,7 @@ protected:
             int idx;    // offset of length prefix word in writeBuffer
 
             /// calculate and write length prefix
-            void fill(bool includeSelf = true) pure @safe
+            void fill(bool includeSelf = true) pure @trusted
             {
                 T len = (con.bufHead - idx).to!T;
                 if (!includeSelf)
@@ -804,14 +809,14 @@ protected:
                 else
                     assert(len >= T.sizeof);
                 logTrace("writing length of %d bytes to index %d", len, idx);
-                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], len);
+                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], &len);
                 assert(res == T.sizeof);
             }
 
             /// write some specific number
-            void write(T v) nothrow pure @safe
+            void write(T v) nothrow pure @trusted
             {
-                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], v);
+                auto res = serializeFixedField(con.writeBuffer[idx .. idx+T.sizeof], &v);
                 assert(res == T.sizeof);
             }
         }
@@ -821,14 +826,14 @@ protected:
         return l;
     }
 
-    final int bwrite(in ubyte[] s) pure @safe
+    final int bwrite(scope const ubyte[] s) pure @safe
     {
-        return wrappedSerialize((ubyte[] buf) => serializeBytesField(buf, s));
+        return wrappedSerialize((ubyte[] buf) => serializeBytesField(buf, &s));
     }
 
     final int write(in string s) pure @safe
     {
-        return wrappedSerialize((ubyte[] buf) => serializeStringField(buf, s));
+        return wrappedSerialize((ubyte[] buf) => serializeStringField(buf, &s));
     }
 
     final int cwrite(in string s) pure @safe
