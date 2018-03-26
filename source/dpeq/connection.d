@@ -657,8 +657,6 @@ protected:
 
     final void putTerminateMessage() pure nothrow @safe
     {
-        assert(open, "Connection is not open");
-
         write(cast(ubyte)FrontMessageType.Terminate);
         write(4);
         logTrace("Terminate message buffered");
