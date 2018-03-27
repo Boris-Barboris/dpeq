@@ -632,7 +632,7 @@ auto blockToTuples
         ResTuple res;
         int len = 0;
         immutable(ubyte)[] vbuf;
-        from = from[2 .. $];    // skip 16 bits
+        from = from[2 .. $];    // skip 2 bytes
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
             len = deserializeNumber(from[0 .. 4]);
@@ -709,7 +709,7 @@ auto blockToTuples
         ResTuple res;
         int len = 0;
         immutable(ubyte)[] vbuf;
-        from = from[2 .. $];    // skip 16 bytes
+        from = from[2 .. $];    // skip 2 bytes
         foreach (i, colSpec; aliasSeqOf!(spec))
         {
             len = deserializeNumber(from[0 .. 4]);

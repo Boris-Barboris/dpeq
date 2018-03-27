@@ -14,7 +14,7 @@ import std.bitmanip: nativeToBigEndian, bigEndianToNative;
 import std.conv: to;
 import std.meta;
 import std.traits;
-import std.typecons: Nullable, Tuple;
+public import std.typecons: Nullable, Tuple;
 import std.variant;
 import std.uuid: UUID;
 
