@@ -381,7 +381,7 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                     err = true;
                     errMsg ~= "Received row without row description. ";
                 }
-                rb.dataRows ~= msg;
+                rb.dataRows ~= msg.data;
                 break;
             default:
                 break;
@@ -427,7 +427,7 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
                     errMsg ~= "Missing required RowDescription. ";
                     break;
                 }
-                result.dataRows ~= msg;
+                result.dataRows ~= msg.data;
                 if (rowCountLimit != 0)
                 {
                     // client code requested early stop
@@ -531,7 +531,7 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultSerializer)
     static struct RowsRange
     {
     private:
-        Message[] dataRows;
+        immutable(ubyte)[][] dataRows;
         OID[] columnTypes;
         FormatCode[] fcodes;
         short totalColumns;
@@ -540,17 +540,17 @@ auto blockToVariants(alias Converter = VariantConverter!DefaultSerializer)
         @property bool empty() const { return dataRows.empty; }
         @property RowDeserializer front()
         {
-            return RowDeserializer(0, totalColumns, dataRows[0].data,
+            return RowDeserializer(0, totalColumns, dataRows[0],
                 columnTypes, fcodes);
         }
         @property RowDeserializer back()
         {
-            return RowDeserializer(0, totalColumns, dataRows[$-1].data,
+            return RowDeserializer(0, totalColumns, dataRows[$-1],
                 columnTypes, fcodes);
         }
         RowDeserializer opIndex(size_t i)
         {
-            return RowDeserializer(0, totalColumns, dataRows[i].data,
+            return RowDeserializer(0, totalColumns, dataRows[i],
                 columnTypes, fcodes);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
@@ -649,22 +649,22 @@ auto blockToTuples
     static struct RowsRange
     {
     private:
-        Message[] dataRows;
+        immutable(ubyte)[][] dataRows;
         FormatCode[] fcodes;
     public:
         @property size_t length() const { return dataRows.length; }
         @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
-            return deserializeRow(dataRows[0].data, fcodes);
+            return deserializeRow(dataRows[0], fcodes);
         }
         @property ResTuple back()
         {
-            return deserializeRow(dataRows[$-1].data, fcodes);
+            return deserializeRow(dataRows[$-1], fcodes);
         }
         ResTuple opIndex(size_t i)
         {
-            return deserializeRow(dataRows[i].data, fcodes);
+            return deserializeRow(dataRows[i], fcodes);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
         void popBack() { dataRows = dataRows[0 .. $-1]; }
@@ -697,7 +697,7 @@ Deserializer template. This version does not require RowDescription, but cannot
 validate row types reliably. */
 auto blockToTuples
     (FieldSpec[] spec, alias Deserializer = DefaultSerializer)
-    (Message[] data) pure
+    (immutable(ubyte)[][] data) pure
 {
     alias ResTuple = TupleForSpec!(spec, Deserializer);
     debug pragma(msg, "Resulting tuple from spec: ", ResTuple);
@@ -727,21 +727,21 @@ auto blockToTuples
     static struct RowsRange
     {
     private:
-        Message[] dataRows;
+        immutable(ubyte)[][] dataRows;
     public:
         @property size_t length() const { return dataRows.length; }
         @property bool empty() const { return dataRows.empty; }
         @property ResTuple front()
         {
-            return deserializeRow(dataRows[0].data);
+            return deserializeRow(dataRows[0]);
         }
         @property ResTuple back()
         {
-            return deserializeRow(dataRows[$-1].data);
+            return deserializeRow(dataRows[$-1]);
         }
         ResTuple opIndex(size_t i)
         {
-            return deserializeRow(dataRows[i].data);
+            return deserializeRow(dataRows[i]);
         }
         void popFront() { dataRows = dataRows[1 .. $]; }
         void popBack() { dataRows = dataRows[0 .. $-1]; }

@@ -199,7 +199,7 @@ is retuned for each "Execute" message. */
 struct RowBlock
 {
     RowDescription rowDesc;
-    Message[] dataRows;
+    immutable(ubyte)[][] dataRows;
     RowBlockState state;
 
     /**
