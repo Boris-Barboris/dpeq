@@ -211,12 +211,12 @@ class Portal(ConnT)
 
         enum fcodesr = [staticMap!(FCodeOfFSpec!(Serializer).F, aliasSeqOf!specs)];
 
-        alias DlgT = int delegate(ubyte[]) pure nothrow @system;
+        alias DlgT = int delegate(ubyte[]) pure nothrow @trusted;
         DlgT[specs.length] serializers;
         foreach(i, paramSpec; aliasSeqOf!specs)
         {
             serializers[i] =
-                (ubyte[] to) pure nothrow => Serializer!paramSpec.serialize(to, &args[i]);
+                (ubyte[] to) pure nothrow @trusted => Serializer!paramSpec.serialize(to, &args[i]);
         }
         conn.putBindMessage(portalName, prepStmt.parsedName, fcodesr,
             serializers, resCodes);

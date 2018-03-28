@@ -40,14 +40,14 @@ If result is less than -2, absolute value is the amount of bytes that is
 required to fully serialize the value.
 */
 alias SerializeF = int function(scope ubyte[] to, scope const void* val)
-    nothrow pure @system;
+    nothrow pure @safe;
 
 /**
 Deserializing function reads 'len' bytes and writes the conversion result to the
 value, pointed by 'val'.
 */
 alias DeserializeF = void function(immutable(ubyte)[] from, in FormatCode fc,
-    in int len, scope void* val) pure @system;
+    in int len, scope void* val) pure @safe;
 
 
 /** Default compile-time one-to-many mapper, wich for OID of some Postgres type
