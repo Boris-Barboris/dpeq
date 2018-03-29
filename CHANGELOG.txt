@@ -1,3 +1,32 @@
+29.03.2018:  v0.3.0 -> v0.4.0
+    Breaking changes:
+    - marshalling renamed to serialization library-wide.
+    - connection timeout is now part of Socket constructor contract.
+    - most functions marked @safe pure with rare exceptions. Socket templates
+        may require @trusted handicaps.
+    - serializers marked nothrow.
+    - StmtOrPortal enum members are now lowercase.
+    - Message backing byte array is marked immutable(ubyte)[].
+    - Serialization functions switched to pointers from references.
+    - RowBlock.dataRows are no longer Messages, but immutable byte arrays.
+    - Calling methods on conirmed-closed connection now does not throw, but asserts.
+    - notificationCallback and noticeCallback marked @safe.
+    - InterceptorT marked @safe.
+    - TransactionStatus enum members are now lowercase.
+    - commandsComplete field of RowBlock and QueryResult structs removed.
+
+    Functionality:
+    - command tag parsing from CommandComplete message. commandTag is a string
+        field of RowBlock struct.
+    - RowBlock has new field 'state', wich indicates how it was finalized.
+    - connection timeout added to constructor (but not used with default socket).
+    - fixed discard - expectedrfq counter relationship.
+    - most put... connection methods now discard written data if they throw.
+    - additional putBindMessage overloads.
+    - new putQueryMessage overload for array of strings wich are effectively
+        concatenated.
+    - ObjectID renamed to OID, but alias is still there.
+
 10.03.2018:  v0.2.0 -> v0.3.0
     Breaking changes:
     - mark most methods final.

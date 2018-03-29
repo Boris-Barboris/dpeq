@@ -6,9 +6,8 @@
 PostgreSQL extended query (EQ) protocol. EQ is a stateful message-based binary 
 protocol working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
 to hold the required state and utility functions, that send and receive protocol
-messages in sensible manner. On top of that, dpeq includes extensible
-schema-oriented serialization functionality, wich maps PSQL types to their
-binary or text representations, native to D.
+messages in sensible manner. On top of that, dpeq includes serialization 
+templates, wich maps PSQL types to their binary or text representations, native to D.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
 help you to understand the nature of the messages being passed:   
@@ -29,63 +28,26 @@ https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
 * source/dpeq/command.d - classes and functions that implement typical operations
   on the connection. You can find examples of *PreparedStatement* and *Portal*
   class implementations there. *getQueryResults* function
-  from this module is bread and butter for response allocation. *blockToVariants*
+  from this module is a good example of message polling. *blockToVariants*
   and *blockToTuples* are example deserialization implementations that allow you to
   lazily work with QueryResults, returned by *getQueryResults*.
 * source/dpeq/constants.d - sorry ass header file.
 * source/dpeq/exceptions.d - exceptions, explicitly thrown from dpeq code.
 * source/dpeq/serialize.d - templated serialization code, used throughout
   dpeq. This is the place to research for ways to add unhandled types.
+* source/dpeq/socket.d - example socket class, that is understood by PSQLConnection
+  class template.
 
 ## How to use vibe-d sockets?
 Wrap them into class and pass it as a template parameter to PSQLConnection.
-```D
-final class SocketT
-{
-    // Vibe-d TCPConnection
-    TCPConnection m_con;
+**pgpepe** library I use on top of dpeq wraps it like this:   
+https://github.com/Boris-Barboris/pgpepe/blob/master/source/pgpepe/connection.d#L53
 
-    this(string host, ushort port, Duration conTimeout)
-    {
-        m_con = connectTCP(host, port);
-        // maybe set timeouts and keepalive here
-    }
-
-    void close()
-    {
-        m_con.close();
-    }
-
-    auto send(const(ubyte)[] buf)
-    {
-        try
-        {
-            return m_con.write(buf, IOMode.all);
-        }
-        catch (Exception e)
-        {
-            throw new PsqlSocketException(e.msg);
-        }
-    }
-
-    auto receive(ubyte[] buf)
-    {
-        try
-        {
-            return m_con.read(buf, IOMode.all);
-        }
-        catch (Exception e)
-        {
-            throw new PsqlSocketException(e.msg);
-        }
-    }
-}
-```
 
 ## Supported native types
 SMALLINT, INT, OID, BIGINT, BOOLEAN, UUID, REAL, DOUBLE PRECISION
 are handled using their respective binary type representations. Types that are
-unknown to the serialization template are transferred using their text representation,
+unknown to the serialization template are assumed to be in their text format,
 thus delegating additional parsing and validation check to PostgreSQL server.
 To quickly hack missing types in, *DefaultSerializer*, *VariantConverter*
 and most serialization-related templates accept template parameters wich can be
@@ -118,7 +80,7 @@ section will try to explain in detail, what is happening in the code.
     If the constructor succeeds, connection is opened and ready to be used. */
     auto con = new ConT(
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
-    // when you want to close the connection, call...
+    // when you want to close the connection, call terminate
     con.terminate();    // will swallow all exceptions
 ```
 ### Create table using *simpleQuery*
@@ -212,7 +174,8 @@ void createTestSchema(ConT)(ConT con)
     getQueryResult calls PSQLConnection.pollMessages wich repeatedly reads
     messages from the socket and fills QueryResult structure with the raw data.
     Polling stops when ReadyForQuery message is received, or the socket throws.
-    ErroResponse message, if met, causes this call to throw.
+    ErrorResponse message, if met, causes this call to throw after the end of
+    polling loop.
 
     QueryResult is an array of row blocks, each block representing the server
     response to one SQL statement. For simple queries, there will be as many
@@ -220,9 +183,10 @@ void createTestSchema(ConT)(ConT con)
     row block corresponds to one Execute message (repsesented by Portal.execute
     in dpeq).
 
-    Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by
-    getQueryResults call. Generally, you should be very careful with
-    ReadyForQuery messages.
+    Every postSimpleQuery or PSQLConnection.sync should probably be accompanied by
+    pollMessages call or it's derivative. Be careful with ReadyForQuery messages.
+    There is an invariant wich will assert if unexpected ReadyForQuery arrives,
+    I hope it will help with debugging.
     */
     con.getQueryResults();
 }
@@ -231,13 +195,13 @@ void createTestSchema(ConT)(ConT con)
 ```D
 
 /*
-FSpecsToFCodes converts array of FieldSpecs to the array of FormatCodes.
-EQ protocol requires client to explicitly specify return type format codes, if
-the client wants to use binary data transfer. If not, all values in responses
-will be transferred as text. All deserializers defined in dpeq accept text
-representation.
+FSpecsToFCodes converts array of FieldSpecs to the array of their preferred
+FormatCodes. EQ protocol requires client to explicitly specify return type 
+format codes, if the client wants to use binary data transfer. 
+If not, all values in responses will be transferred as text. 
+All deserializers defined in dpeq accept text representation.
 
-This line evaluates the efficient array of format codes for the testTableSpec
+This line evaluates the preferred array of format codes for the testTableSpec
 tuple. Everything the DefaultFieldMarshaller will accept in binary will be
 requested in binary.
 */
@@ -280,13 +244,13 @@ void main()
     the EQ protocol. Prepared statement is a pre-parsed and semantically checked
     SQL query. Prepared statement may be named and unnamed:
         - named are persistent and require explicit closing in order to be reparsed
-        - unnamed is volatile and is easily reparsed.
+        - unnamed are volatile and are effortlessly reparsed.
         - persist flag in PreparedStatement constructor controls the type of
             the prepared statement.
     Fourth argument is an optional array of explicitly stated parameter types.
-    I believe it is an alternative to PSQL ::<type> syntax for explicit casting,
-    but I am not sure exactly when to use it. In my experience, you can simply
-    leave the array empty.
+    It is an alternative to PSQL ::<type> syntax for explicit casting. Zero OID
+    type in this array will leave type unspecified - useful for strings, wich will
+    be implicitly casted by backend to the type implied by the query.
 
     Relevant quote:
     "...If successfully created, a named prepared-statement object lasts till the

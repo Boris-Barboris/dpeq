@@ -10,5 +10,5 @@
   {
     "dpeq": { "path": "../" }
   },
-  "lflags": ["--export-dynamic"]
+  "lflags-ldc": ["--export-dynamic"]
 }
