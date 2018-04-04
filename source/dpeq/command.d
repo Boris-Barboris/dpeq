@@ -129,7 +129,7 @@ class PreparedStatement(ConnT)
     final void ensureParseComplete()
     {
         bool parsed = false;
-        bool interceptor(Message msg, ref bool err, ref string errMsg)
+        bool interceptor(Message msg)
         {
             with (BackendMessageType)
             switch (msg.type)
@@ -301,7 +301,7 @@ class Portal(ConnT)
     final void ensureBindComplete()
     {
         bool is_bound = false;
-        bool interceptor(Message msg, ref bool err, ref string errMsg)
+        bool interceptor(Message msg)
         {
             with (BackendMessageType)
             switch (msg.type)
@@ -345,12 +345,12 @@ class Portal(ConnT)
 Polls messages from the connection and builds QueryResult structure from
 them. Throws if something goes wrong. Polling stops when ReadyForQuery message
 is received. */
-QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = false)
+QueryResult getQueryResults(ConnT)(ConnT conn)
 {
     QueryResult res;
     RowBlock rb;
 
-    bool interceptor(Message msg, ref bool err, ref string errMsg) nothrow
+    bool interceptor(Message msg) nothrow
     {
         with (BackendMessageType)
         switch (msg.type)
@@ -372,15 +372,9 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
                 rb = RowBlock();
                 break;
             case RowDescription:
-                // RowDescription always precedes new row block data
                 rb.rowDesc = dpeq.result.RowDescription(msg.data);
                 break;
             case DataRow:
-                if (requireRowDescription)
-                {
-                    err = true;
-                    errMsg ~= "Received row without row description. ";
-                }
                 rb.dataRows ~= msg.data;
                 break;
             default:
@@ -396,12 +390,11 @@ QueryResult getQueryResults(ConnT)(ConnT conn, bool requireRowDescription = fals
 
 /// Poll messages from the connection until CommandComplete or EmptyQueryResponse
 /// is received, and return one row block (result of one and only one query).
-RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
-    bool requireRowDescription = false)
+RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0)
 {
     RowBlock result;
 
-    bool interceptor(Message msg, ref bool err, ref string errMsg) nothrow
+    bool interceptor(Message msg) nothrow
     {
         with (BackendMessageType)
         switch (msg.type)
@@ -421,18 +414,11 @@ RowBlock getOneRowBlock(ConnT)(ConnT conn, int rowCountLimit = 0,
                 requireRowDescription = false;
                 break;
             case DataRow:
-                if (requireRowDescription)
-                {
-                    err = true;
-                    errMsg ~= "Missing required RowDescription. ";
-                    break;
-                }
                 result.dataRows ~= msg.data;
                 if (rowCountLimit != 0)
                 {
                     // client code requested early stop
-                    rowCountLimit--;
-                    if (rowCountLimit == 0)
+                    if (--rowCountLimit == 0)
                     {
                         result.state = RowBlockState.incomplete;
                         return true;

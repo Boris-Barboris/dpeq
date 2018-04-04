@@ -550,26 +550,31 @@ class PSQLConnection(
     Interceptor should set err to true if it has encountered some kind of error
     and wants it to be rethrown as PsqlClientException at the end of
     pollMessages call. errMsg should be appended with error description. */
-    alias InterceptorT = bool delegate(Message msg, ref bool err,
-        ref string errMsg) @safe nothrow;
+    alias InterceptorT = bool delegate(Message msg) @safe nothrow;
 
     /** Read messages from the socket in loop until:
       1). if finishOnError is set and ErrorResponse is received, function
-          throws immediately.
+          throws PsqlErrorResponseException immediately.
       2). ReadyForQuery message is received.
       3). interceptor delegate returns `true`.
       4). NotificationResponse received and notificationCallback returned 'true'.
     Interceptor delegate is used to customize the logic. If the message is
     not ReadyForQuery, ErrorResponse or Notice\Notification, it is passed to
-    interceptor. It may set bool 'err' flag to true and append to 'errMsg'
-    string, if delayed throw is required. */
+    interceptor. */
     final void pollMessages(scope InterceptorT interceptor, bool finishOnError = false) @safe
     {
-        bool finish = false;
-        bool error = false;
+        bool error;
         Notice errorNotice;
-        bool intError = false;
-        string intErrMsg;
+        pollMessages(interceptor, error, errorNotice, finishOnError);
+        if (error)
+            throw new PsqlErrorResponseException(errorNotice);
+    }
+
+    /// Same as above, but throws only on serious protocol or socket-level errors.
+    final void pollMessages(scope InterceptorT interceptor,
+        out bool error, out Notice errorNotice, bool finishOnError = false) @safe
+    {
+        bool finish = false;
 
         while (!finish)
         {
@@ -614,14 +619,9 @@ class PSQLConnection(
                     break;
                 default:
                     if (interceptor !is null)
-                        finish |= interceptor(msg, intError, intErrMsg);
+                        finish |= interceptor(msg);
             }
         }
-
-        if (error)
-            throw new PsqlErrorResponseException(errorNotice);
-        if (intError)
-            throw new PsqlClientException(intErrMsg);
     }
 
     /// reads and discards messages from socket until all expected
@@ -671,29 +671,24 @@ protected:
         int authType = -1;
         Message auth_msg;
 
-        pollMessages((Message msg, ref bool e, ref string eMsg) {
-                if (msg.type == BackendMessageType.Authentication)
-                {
-                    auth_msg = msg;
-                    if (authType != -1)
-                    {
-                        e = true;
-                        eMsg ~= "Unexpected second Authentication " ~
-                            "message received from backend";
-                    }
-                    authType = deserializeNumber(msg.data[0..4]);
-                    if (authType == 0)  // instantly authorized, so we'll get readyForQuery
-                        readyForQueryExpected++;
-                    else
-                        return true;
-                }
-                else if (msg.type == BackendMessageType.BackendKeyData)
-                {
-                    m_processId = deserializeNumber(msg.data[0..4]);
-                    m_cancellationKey = deserializeNumber(msg.data[4..8]);
-                }
-                return false;
-            }, true);
+        pollMessages((Message msg)
+        {
+            if (msg.type == BackendMessageType.Authentication)
+            {
+                auth_msg = msg;
+                authType = deserializeNumber(msg.data[0..4]);
+                if (authType == 0)  // instantly authorized, so we'll get readyForQuery
+                    readyForQueryExpected++;
+                else
+                    return true;
+            }
+            else if (msg.type == BackendMessageType.BackendKeyData)
+            {
+                m_processId = deserializeNumber(msg.data[0..4]);
+                m_cancellationKey = deserializeNumber(msg.data[4..8]);
+            }
+            return false;
+        }, true);
 
         enforce!PsqlClientException(authType != -1,
             "Expected Authentication message was not received");
@@ -719,7 +714,7 @@ protected:
         flush();
 
         int authRes = -1;
-        pollMessages((Message msg, ref bool e, ref string eMsg) {
+        pollMessages((Message msg) {
                 if (msg.type == BackendMessageType.Authentication)
                     authRes = deserializeNumber(msg.data[0..4]);
                 else if (msg.type == BackendMessageType.BackendKeyData)
