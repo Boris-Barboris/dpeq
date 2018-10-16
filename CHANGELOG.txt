@@ -1,3 +1,10 @@
+16.10.2018:  v0.4.0 -> v0.4.1
+    Breaking changes:
+    - postSimpleQuery function template removed
+
+    Functionality:
+    - copyData, copyDone and copyFail messages now have helper send functions in connection class.
+
 29.03.2018:  v0.3.0 -> v0.4.0
     Breaking changes:
     - marshalling renamed to serialization library-wide.
