@@ -35,19 +35,6 @@ import dpeq.result;
 /////////////////////////////////////
 */
 
-/** Simple query is simple. Send string to server and get responses.
-The most versatile, but unsafe way to issue commands to PSQL.
-Simple query always returns data in FormatCode.Text format.
-Simple queries SHOULD NOT be accompanied by SYNC message, they
-trigger ReadyForQuery message anyways.
-
-Every postSimpleQuery or PSQLConnection.sync should be accompanied by getQueryResults
-call. */
-void postSimpleQuery(ConnT)(ConnT conn, string query) pure
-{
-    conn.putQueryMessage(query);
-}
-
 /// Pre-parsed sql query with variable parameters.
 class PreparedStatement(ConnT)
 {

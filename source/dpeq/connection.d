@@ -408,8 +408,8 @@ class PSQLConnection(
         logTrace("Close message buffered");
     }
 
-    /// put Close message into write buffer.
-    /// `closeWhat` is 'S' for prepared statement and
+    /// put Describe message into write buffer.
+    /// `descWhat` is 'S' for prepared statement and
     /// 'P' for portal.
     final void putDescribeMessage(StmtOrPortal descWhat, string name) pure @safe
     {
@@ -533,6 +533,45 @@ class PSQLConnection(
         write(4);
         unflushedRfq++;
         logTrace("Sync message buffered");
+    }
+
+    /**
+    Put CopyData message into write buffer. https://www.postgresql.org/docs/9.5/static/protocol-flow.html#PROTOCOL-COPY
+    */
+    final void putCopyDataMessage(in ubyte[] msg) pure @safe
+    {
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
+        write(cast(ubyte)FrontMessageType.CopyData);
+        auto lenTotal = reserveLen();
+        bwrite(msg);
+        lenTotal.fill();
+        logTrace("CopyData message buffered");
+    }
+
+    /// Put CopyDone message into write buffer. Concludes COPY IN operation.
+    final void putCopyDoneMessage() pure nothrow @safe
+    {
+        assert(open, "Connection is not open");
+        write(cast(ubyte)FrontMessageType.CopyDone);
+        write(4);
+        logTrace("CopyDone message buffered");
+    }
+
+    /// Put CopyFail message into write buffer. Aborts COPY operation.
+    final void putCopyFailMessage(in string cause) pure @safe
+    {
+        assert(open, "Connection is not open");
+        int savepoint = bufHead;
+        scope(failure) bufHead = savepoint;
+
+        write(cast(ubyte)FrontMessageType.CopyFail);
+        auto lenTotal = reserveLen();
+        cwrite(cause);
+        lenTotal.fill();
+        logTrace("CopyFail message buffered");
     }
 
     alias sync = putSyncMessage;

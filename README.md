@@ -150,14 +150,14 @@ string createTableCommand()
 void createTestSchema(ConT)(ConT con)
 {
     /*
-    postSimpleQuery is related to EQ's predecessor, simple query
+    putSimpleQuery is related to EQ's predecessor, simple query
     protocol. It is a text-only message format, wich is well suited for
     parameterless, reliable (no user input) queries.
 
-    postSimpleQuery takes our "CREATE TABLE..." sql query and writes it to
+    putSimpleQuery takes our "CREATE TABLE..." sql query and writes it to
     con's write buffer.
     */
-    con.postSimpleQuery(createTableCommand());
+    con.putSimpleQuery(createTableCommand());
 
     /*
     flush() actually sends connection's write buffer to the socket.
@@ -183,7 +183,7 @@ void createTestSchema(ConT)(ConT con)
     row block corresponds to one Execute message (repsesented by Portal.execute
     in dpeq).
 
-    Every postSimpleQuery or PSQLConnection.sync should probably be accompanied by
+    Every putSimpleQuery or PSQLConnection.sync should probably be accompanied by
     pollMessages call or it's derivative. Be careful with ReadyForQuery messages.
     There is an invariant wich will assert if unexpected ReadyForQuery arrives,
     I hope it will help with debugging.
@@ -645,7 +645,7 @@ void notifyExample()
             "r00tme", "dpeqtestdb"));
         Thread.sleep(msecs(500));   // make sure second thread has connected
         // simple query to notify thread2
-        con.postSimpleQuery("NOTIFY chan1, 'Payload1337';");
+        con.putSimpleQuery("NOTIFY chan1, 'Payload1337';");
         con.flush();
         // pollMessages(null) is cheaper alternative to getQueryResult when
         // you don't care about the data being returned
@@ -663,7 +663,7 @@ void notifyExample()
         // message during pollMessages call.
         con.notificationCallback = (Notification n) { inbox = n; return true; };
         // subscribe to channel
-        con.postSimpleQuery("LISTEN chan1;");
+        con.putSimpleQuery("LISTEN chan1;");
         con.flush();
         con.pollMessages(null);
         // this poll blocks for approx half a second, because we sleep in first 
@@ -690,7 +690,7 @@ void exceptionExample()
     ConT con = new ConT(
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
         "r00tme", "dpeqtestdb"));
-    con.postSimpleQuery("SELECT * from nonexisting_table;");
+    con.putSimpleQuery("SELECT * from nonexisting_table;");
     con.flush();
     try
     {
@@ -717,7 +717,7 @@ void cancellationExample()
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
         "r00tme", "dpeqtestdb"));
     writeln("cancellation data: ", con.processId, ", ", con.cancellationKey);
-    con.postSimpleQuery("SELECT pg_sleep(0.5);");
+    con.putSimpleQuery("SELECT pg_sleep(0.5);");
     con.flush();
     Thread.sleep(msecs(50));
     writeln("cancelling request");
@@ -747,7 +747,7 @@ void unixSocketExample()
     // Default BackendParams.host is set to
     // "/var/run/postgresql/.s.PGSQL.5432"
     auto con = new ConT(BackendParams());
-    con.postSimpleQuery("select version();");
+    con.putSimpleQuery("select version();");
     con.flush();
     auto res = con.getQueryResults();
     auto firstRow = blockToVariants(res.blocks[0])[0];

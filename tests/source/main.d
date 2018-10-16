@@ -87,7 +87,7 @@ alias ConT = PSQLConnection!(StdSocket);//, writefln);
 
 void createTestSchema(ConT)(ConT con)
 {
-    con.postSimpleQuery(createTableCommand());
+    con.putSimpleQuery(createTableCommand());
     con.flush();
     con.getQueryResults();
 }
@@ -174,6 +174,7 @@ void main()
     notifyExample();
     exceptionExample();
     cancellationExample();
+    copyInExample();
 
     // please keep this test the last one, so I can run most tests without Unix
     // sockets available.
@@ -294,7 +295,7 @@ void notifyExample()
             "r00tme", "dpeqtestdb"));
         // make sure second thread had time to connect and LISTEN our channel
         Thread.sleep(msecs(250));
-        con.postSimpleQuery("NOTIFY chan1, 'Payload1337';");
+        con.putSimpleQuery("NOTIFY chan1, 'Payload1337';");
         con.flush();
         con.pollMessages(null);
         con.terminate();
@@ -307,7 +308,7 @@ void notifyExample()
             "r00tme", "dpeqtestdb"));
         Notification inbox;
         con.notificationCallback = (ConT c, Notification n) { inbox = n; return true; };
-        con.postSimpleQuery("LISTEN chan1;");
+        con.putSimpleQuery("LISTEN chan1;");
         con.flush();
         con.pollMessages(null);
         // blocks for approx half a second
@@ -332,7 +333,7 @@ void exceptionExample()
     ConT con = new ConT(
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
         "r00tme", "dpeqtestdb"));
-    con.postSimpleQuery("SELECT * from nonexisting_table;");
+    con.putSimpleQuery("SELECT * from nonexisting_table;");
     con.flush();
     try
     {
@@ -359,7 +360,7 @@ void cancellationExample()
         BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
         "r00tme", "dpeqtestdb"));
     writeln("cancellation data: ", con.processId, ", ", con.cancellationKey);
-    con.postSimpleQuery("SELECT pg_sleep(0.5);");
+    con.putSimpleQuery("SELECT pg_sleep(0.5);");
     con.flush();
     Thread.sleep(msecs(50));
     writeln("cancelling request");
@@ -390,10 +391,63 @@ version(Posix)
         // Default BackendParams.host is set to
         // /var/run/postgresql/.s.PGSQL.5432
         auto con = new ConT(BackendParams());
-        con.postSimpleQuery("select version();");
+        con.putSimpleQuery("select version();");
         con.flush();
         auto res = con.getQueryResults();
         auto firstRow = blockToVariants(res.blocks[0])[0];
         writeln("psql version: ", firstRow.front);
     }
+}
+
+
+void copyInExample()
+{
+    ConT con = new ConT(
+        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
+        "r00tme", "dpeqtestdb"));
+    con.putSimpleQuery("CREATE TABLE copyintable (id bigint PRIMARY KEY, str varchar);");
+    con.flush();
+    con.pollMessages(null);
+    con.putSimpleQuery("COPY copyintable (id, str) FROM STDIN;");
+    con.flush();
+    bool receivedCopyResponse;
+    // backend answers with CopyInResponse message.
+    con.pollMessages((Message msg) nothrow @safe {
+        if (msg.type == BackendMessageType.CopyInResponse)
+        {
+            receivedCopyResponse = true;
+            return true;
+        }
+        return false;
+    });
+    assert(receivedCopyResponse);
+    con.putCopyDataMessage(cast(ubyte[]) "1\tstring1\n3\tstring2\n15\t\\N");
+    con.putCopyDoneMessage();
+    con.flush();
+    con.pollMessages(null);
+
+    // let's check the result
+    con.putSimpleQuery("SELECT * FROM copyintable");
+    con.flush();
+
+    // test resulting rows
+    auto res = con.getQueryResults();
+    assert(res.blocks.length == 1);
+    assert(res.blocks[0].state == RowBlockState.complete);
+    auto variantRows = blockToVariants(res.blocks[0]);
+    assert(variantRows.length == 3);
+    auto row = variantRows[0];
+    assert(row.front == long(1));
+    row.popFront();
+    assert(row.front == "string1");
+    row = variantRows[1];
+    assert(row.front == long(3));
+    row.popFront();
+    assert(row.front == "string2");
+    row = variantRows[2];
+    assert(row.front == long(15));
+    row.popFront();
+    assert(row.front.isNull);
+
+    con.terminate();
 }
