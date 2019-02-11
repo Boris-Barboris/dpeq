@@ -162,22 +162,31 @@ class PSQLConnection(
         open = true;
     }
 
-    /// Notify backend and close socket.
-    void terminate() nothrow @safe
+    ~this()
+    {
+        terminate(false);
+    }
+
+    /// Unconditionally close the underlying socket.
+    /// If 'gracefully' is true, tries to send Terminate message beforehand.
+    void terminate(bool gracefully = true) nothrow @safe
     {
         open = false;
-        try
+        if (m_socket is null)
+            return;
+        scope(exit) m_socket.close();
+        if (gracefully)
         {
-            putTerminateMessage();
-            flush();
-        }
-        catch (Exception e)
-        {
-            logError("Exception caught while terminating PSQL connection: %s", e.msg);
-        }
-        finally
-        {
-            m_socket.close();
+            try
+            {
+                putTerminateMessage();
+                flush();
+            }
+            catch (Exception e)
+            {
+                logError("Exception caught while terminating PSQL connection: %s %s",
+                    e.classinfo.name, e.msg);
+            }
         }
     }
 
@@ -188,6 +197,7 @@ class PSQLConnection(
     void cancelRequest() @safe
     {
         SocketT sock = new SocketT(m_backendParams.host, m_backendParams.port, seconds(5));
+        scope(exit) sock.close();
         ubyte[4 * 4] intBuf;
         static immutable int pn1 = 16;
         serializeFixedField(intBuf[0..4], &pn1);
@@ -196,7 +206,6 @@ class PSQLConnection(
         serializeFixedField(intBuf[8..12], &m_processId);
         serializeFixedField(intBuf[12..16], &m_cancellationKey);
         sock.send(intBuf[]);
-        sock.close();
     }
 
     /// Flush writeBuffer into the socket. Blocks/yields (according to socket
@@ -210,18 +219,19 @@ class PSQLConnection(
             auto w = m_socket.send(writeBuffer[0..bufHead]);
             while (bufHead - w > 0)
                 w += m_socket.send(writeBuffer[w..bufHead]);
-            logTrace("flushed %d bytes: %s", w, writeBuffer[0..bufHead].to!string);
-        }
-        catch (PsqlSocketException e)
-        {
-            open = false;
-            throw e;
-        }
-        finally
-        {
+            auto prevBufHead = bufHead;
             bufHead = 0;
             readyForQueryExpected += unflushedRfq;
             unflushedRfq = 0;
+            logTrace("flushed %d bytes: %s", w, writeBuffer[0..prevBufHead].to!string);
+        }
+        catch (Exception e)
+        {
+            // If socket.send fails, we are in undetermined state relative to psql
+            // protocol flow: number of expected answers is unknown. It's best to mark
+            // connection as closed in such an occasion.
+            open = false;
+            throw e;
         }
     }
 
@@ -298,7 +308,8 @@ class PSQLConnection(
     //    isInputRange!RR && is(Unqual!(ElementType!RR) == FormatCode) &&
     //    isInputRange!PR && __traits(compiles, -1 == parameters.front()(new ubyte[2]))
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -350,7 +361,8 @@ class PSQLConnection(
     final void putBindMessage(RR)(string portal, string prepared,
         scope RR resultFormatCodes) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -379,7 +391,8 @@ class PSQLConnection(
     final void putBindMessage(string portal, string prepared,
         scope const(const(ubyte)[])[] rawChunks) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -398,7 +411,8 @@ class PSQLConnection(
     /// 'P' for portal.
     final void putCloseMessage(StmtOrPortal closeWhat, string name) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         assert(closeWhat == 'S' || closeWhat == 'P');
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
@@ -416,7 +430,8 @@ class PSQLConnection(
     /// 'P' for portal.
     final void putDescribeMessage(StmtOrPortal descWhat, string name) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         assert(descWhat == 'S' || descWhat == 'P');
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
@@ -434,7 +449,8 @@ class PSQLConnection(
     currently not handled by dpeq commands */
     final void putExecuteMessage(string portal = "", int maxRows = 0) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -455,9 +471,10 @@ class PSQLConnection(
     commands. Without Flush, messages returned by the backend will be combined
     into the minimum possible number of packets to minimize network overhead."
     */
-    final void putFlushMessage() pure nothrow @safe
+    final void putFlushMessage() pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         write(cast(ubyte)FrontMessageType.Flush);
         write(4);
         logTrace("Flush message buffered");
@@ -466,7 +483,8 @@ class PSQLConnection(
     final void putParseMessage(PR)(string prepared, string query, scope PR ptypes)
         pure @safe if (isInputRange!PR && is(Unqual!(ElementType!PR) == OID))
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -492,7 +510,8 @@ class PSQLConnection(
     /// put Query message (simple query protocol) into the write buffer
     final void putQueryMessage(in string query) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -507,7 +526,8 @@ class PSQLConnection(
     /// ditto
     final void putQueryMessage(in string[] queryChunks) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -529,9 +549,10 @@ class PSQLConnection(
     Put Sync message into write buffer. Usually you should call this after
     every portal execute message.
     Every postSimpleQuery or PSQLConnection.sync MUST be accompanied by getQueryResults call. */
-    final void putSyncMessage() pure nothrow @safe
+    final void putSyncMessage() pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         write(cast(ubyte)FrontMessageType.Sync);
         write(4);
         unflushedRfq++;
@@ -543,7 +564,8 @@ class PSQLConnection(
     */
     final void putCopyDataMessage(in ubyte[] msg) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -555,9 +577,10 @@ class PSQLConnection(
     }
 
     /// Put CopyDone message into write buffer. Concludes COPY IN operation.
-    final void putCopyDoneMessage() pure nothrow @safe
+    final void putCopyDoneMessage() pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         write(cast(ubyte)FrontMessageType.CopyDone);
         write(4);
         logTrace("CopyDone message buffered");
@@ -566,7 +589,8 @@ class PSQLConnection(
     /// Put CopyFail message into write buffer. Aborts COPY operation.
     final void putCopyFailMessage(in string cause) pure @safe
     {
-        assert(open, "Connection is not open");
+        if (!open)
+            throw new PsqlConnectionClosedException("Connection is not open");
         int savepoint = bufHead;
         scope(failure) bufHead = savepoint;
 
@@ -588,10 +612,7 @@ class PSQLConnection(
     /// passed to this callback during 'pollMessages' call.
     void delegate(typeof(this) con, Notice n) nothrow @safe noticeCallback = null;
 
-    /** When this callback returns true, pollMessages will exit it's loop.
-    Interceptor should set err to true if it has encountered some kind of error
-    and wants it to be rethrown as PsqlClientException at the end of
-    pollMessages call. errMsg should be appended with error description. */
+    /** When this callback returns true, pollMessages will exit it's loop. */
     alias InterceptorT = bool delegate(Message msg) @safe nothrow;
 
     /** Read messages from the socket in loop until:
