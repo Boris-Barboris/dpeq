@@ -170,11 +170,14 @@ class PSQLConnection(
         {
             putTerminateMessage();
             flush();
-            m_socket.close();
         }
         catch (Exception e)
         {
             logError("Exception caught while terminating PSQL connection: %s", e.msg);
+        }
+        finally
+        {
+            m_socket.close();
         }
     }
 
