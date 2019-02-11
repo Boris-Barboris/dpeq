@@ -162,11 +162,6 @@ class PSQLConnection(
         open = true;
     }
 
-    ~this()
-    {
-        terminate(false);
-    }
-
     /// Unconditionally close the underlying socket.
     /// If 'gracefully' is true, tries to send Terminate message beforehand.
     void terminate(bool gracefully = true) nothrow @safe

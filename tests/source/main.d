@@ -450,4 +450,6 @@ void copyInExample()
     assert(row.front.isNull);
 
     con.terminate();
+
+    writeln("copyInExample OK");
 }
