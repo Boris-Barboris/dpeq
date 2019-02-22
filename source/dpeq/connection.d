@@ -65,6 +65,7 @@ class PSQLConnection(
         ubyte[] writeBuffer;
         int bufHead = 0;
         bool open = false;
+        bool terminated = false;
 
         // we allocate RAM for responses in batches to reduce GC pressure.
         // 2048 is the last small-sized dling in gc:
@@ -118,7 +119,7 @@ class PSQLConnection(
 
         /// Connection is open when it is authorized and socket was alive last time
         /// it was checked.
-        bool isOpen() const { return open; }
+        bool isOpen() const { return open && !terminated; }
     }
 
     invariant
@@ -155,9 +156,10 @@ class PSQLConnection(
         }
         catch (Exception e)
         {
+            terminated = true;
             throw new PsqlSocketException(e.msg, e);
         }
-        scope(failure) m_socket.close();
+        scope(failure) terminate(false);
         initialize(bp);
         open = true;
     }
@@ -167,8 +169,9 @@ class PSQLConnection(
     void terminate(bool gracefully = true) nothrow @safe
     {
         open = false;
-        if (m_socket is null)
+        if (terminated)
             return;
+        terminated = true;
         scope(exit) m_socket.close();
         if (gracefully)
         {
