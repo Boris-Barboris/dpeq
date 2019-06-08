@@ -1,7 +1,7 @@
 /**
-Constants of various nature.
+Wire protocol constants.
 
-Copyright: Copyright Boris-Barboris 2017-2018.
+Copyright: Boris-Barboris 2017-2019.
 License: MIT
 Authors: Boris-Barboris
 */
@@ -9,20 +9,22 @@ Authors: Boris-Barboris
 module dpeq.constants;
 
 
-/// oid. Unique identifier of a Psql object. Mostly used to identify a type in dpeq.
-alias OID = int;
-alias ObjectID = OID;
+/// dpeq implements only this version of wire protocol.
+enum PROTOCOL_VERSION_MAJOR = 3;
+enum PROTOCOL_VERSION_MINOR = 0;
 
-/// Format of a marshalled value.
+/// Based on technical limitations of postgres.
+enum ESTIMATE_MAX_FIELDS_IN_ROW = 2048;
+
+/// Format of a serialized value.
 enum FormatCode: short
 {
-    Text = 0,
-    Binary = 1,
+    TEXT = 0,
+    BINARY = 1,
 }
 
-/** Small portion of statically known ids of Psql types, wich is enough
-* to start connection and request full type list. */
-enum StaticPgTypes: OID
+/// Small portion of statically known oids of Postgres types.
+enum KnownTypeOID: int
 {
     NULL = 0,
     BOOLEAN = 16,
@@ -47,7 +49,7 @@ enum StaticPgTypes: OID
     LINE = 628,
     CIDR = 650,
     REAL = 700,     /// 32-bit float
-    DOUBLE = 701,   /// 64-bit double, is actually called 'double precision'
+    DOUBLE_PRECISION = 701,   /// 64-bit double, is actually called 'double precision'
     ABSTIME = 702,
     UNKNOWN = 705,
     CIRCLE = 718,
@@ -57,6 +59,7 @@ enum StaticPgTypes: OID
     DATE = 1082,
     TIME = 1083,
     TIMESTAMP = 1114,
+    TIMESTAMPTZ = 1184,
     INTERVAL = 1186,
     TIMETZ = 1266,
     BIT = 1560,
@@ -77,26 +80,9 @@ enum StaticPgTypes: OID
     JSONB = 3802
 }
 
-/// ditto...
-alias PgType = StaticPgTypes;
-
-/// Returns postgress-compatible name of the type. Throws if type OID is
-/// unknown.
-string pgTypeName(OID pgt)
-{
-    import std.conv: to;
-    StaticPgTypes spgt = pgt.to!StaticPgTypes;
-    switch (spgt)
-    {
-        case (StaticPgTypes.DOUBLE):
-            return "double precision";
-        default:
-            return spgt.to!string;
-    }
-}
-
-/// https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
-enum FrontMessageType: char
+/// Messages, sent by frontend (postgres client).
+/// https://www.postgresql.org/docs/current/protocol-message-formats.html
+enum FrontendMessageType: char
 {
     Bind = 'B',
     Close = 'C',
@@ -114,40 +100,66 @@ enum FrontMessageType: char
     Terminate = 'T'
 }
 
-/// https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
+/// Messages, sent by backend (postgres server).
+/// https://www.postgresql.org/docs/current/protocol-message-formats.html
 enum BackendMessageType: char
 {
     Authentication = 'R',
     BackendKeyData = 'K',
-    BindComplete = '2',
-    CloseComplete = '3',
+    BindComplete = '2',         /// header-only message, no body
+    CloseComplete = '3',        /// header-only message, no body
     CommandComplete = 'C',
     CopyData = 'd',
-    CopyDone = 'c',
+    CopyDone = 'c',             /// header-only message, no body
     CopyInResponse = 'G',
     CopyOutResponse = 'H',
     CopyBothResponse = 'W',
     DataRow = 'D',
-    EmptyQueryResponse = 'I',
+    EmptyQueryResponse = 'I',   /// header-only message, no body
     ErrorResponse = 'E',
     FunctionCallResponse = 'V',
-    NoData = 'n',
+    NoData = 'n',               /// header-only message, no body
     NoticeResponse = 'N',
     NotificationResponse = 'A',
     ParameterDescription = 't',
     ParameterStatus = 'S',
-    ParseComplete = '1',
-    PortalSuspended = 's',
+    ParseComplete = '1',        /// header-only message, no body
+    PortalSuspended = 's',      /// header-only message, no body
     ReadyForQuery = 'Z',
-    RowDescription = 'T'
+    RowDescription = 'T',
+    NegotiateProtocolVersion = 'b'
 }
 
-/** Content of the ReadyForQuery response message, indicating backend
-transaction status. */
+/// Content of the ReadyForQuery response message, wich indicates
+/// backend transaction status at the moment the message was sent.
 enum TransactionStatus: char
 {
-    idle = 'I',     /// idle (not in transaction block)
-    inside = 'T',   /// inside transaction block
-    /// in failed transaction block (queries will be rejected until block is ended)
-    failed = 'E'
+    IDLE = 'I',     /// not in transaction block.
+    INSIDE = 'T',   /// inside transaction block.
+    /// in failed transaction block (queries will be rejected until block is ended).
+    FAILED = 'E'
+}
+
+enum PreparedStatementOrPortal: char
+{
+    PREPARED_STATEMENT = 'S',
+    PORTAL = 'P'
+}
+
+enum int AUTHENTICATION_SUCCESS = 0;
+
+/// Known authentication protocol designator, first field in Authentication***
+/// backend message contents.
+enum AuthenticationProtocol: int
+{
+    KERBEROSV5 = 2,
+    CLEARTEXT_PASSWORD = 3,
+    MD5_PASSWORD = 5,
+    SCMC_CREDENTIALS = 6,
+    GSSAPI = 7,
+    SSPI = 9,
+    GCC_CONTINUE = 8,    /// message contains GSSAPI or SSPI data
+    SASL = 10,
+    SASL_CONTINUE = 11,
+    SASL_FINAL = 12
 }

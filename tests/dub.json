@@ -1,14 +1,15 @@
 {
-  "name": "dpeq_tests",
-  "description": "Tests for dpeq",
-  "license": "MIT",
-  "targetType": "executable",
-  "copyright": "Copyright © 2017-2018 Boris-Barboris",
-  "homepage": "https://github.com/Boris-Barboris/dpeq/",
-  "authors": ["Boris-Barboris"],
-  "dependencies":
-  {
-    "dpeq": { "path": "../" }
-  },
-  "lflags-ldc": ["--export-dynamic"]
+    "name": "dpeq_tests",
+    "description": "Tests for dpeq",
+    "license": "MIT",
+    "targetType": "executable",
+    "copyright": "Copyright © 2017-2019 Boris-Barboris",
+    "homepage": "https://github.com/Boris-Barboris/dpeq/",
+    "authors": ["Boris-Barboris"],
+    "dependencies":
+    {
+        "dpeq": { "path": "../" },
+        "d-unit": "==0.9.0"
+    },
+    "lflags-ldc": ["--export-dynamic"]
 }

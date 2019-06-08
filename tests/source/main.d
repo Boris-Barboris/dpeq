@@ -1,455 +1,528 @@
 /**
 Simple tests that serve as an example.
 
-Copyright: Copyright Boris-Barboris 2017-2018.
+Copyright: Copyright Boris-Barboris 2017-2019.
 License: MIT
 Authors: Boris-Barboris
 */
 
-import dpeq;
-
-import std.array: join, array;
-import std.conv: to;
-import std.exception: assumeWontThrow;
-import std.typecons: Nullable, scoped;
-import std.meta;
-import std.stdio;
-import std.variant: visit;
-import std.uuid: UUID, randomUUID;
-
 import core.thread;
 import core.time;
 
+import std.algorithm: map;
+import std.array: array;
+import std.ascii: isAlphaNum;
+import std.conv: to;
+import std.string: strip;
+import std.exception: assumeWontThrow;
+import std.typecons: Nullable, scoped;
+import std.process: environment;
+import std.stdio;
+import std.uuid: UUID, randomUUID;
 
-/// test spec of a table row, wich includes the specializations of a
-/// StaticFieldMarshaller, as well as a couple of types wich are supposed to
-/// fallback to PromiscuousStringMarshaller
-enum FieldSpec[] testTableSpec = [
-    FieldSpec(PgType.BOOLEAN, false),
-    FieldSpec(PgType.BOOLEAN, true),
-    FieldSpec(PgType.BIGINT, false),
-    FieldSpec(PgType.BIGINT, true),
-    FieldSpec(PgType.SMALLINT, false),
-    FieldSpec(PgType.SMALLINT, true),
-    FieldSpec(PgType.INT, false),
-    FieldSpec(PgType.INT, true),
-    FieldSpec(PgType.VARCHAR, false),
-    FieldSpec(PgType.VARCHAR, true),
-    FieldSpec(PgType.TEXT, false),
-    FieldSpec(PgType.TEXT, true),
-    FieldSpec(PgType.UUID, false),
-    FieldSpec(PgType.UUID, true),
-    FieldSpec(PgType.REAL, false),
-    FieldSpec(PgType.REAL, true),
-    FieldSpec(PgType.DOUBLE, false),
-    FieldSpec(PgType.DOUBLE, true),
-    // This PgTypes are not handled by StaticFieldMarshaller and should fallback
-    // to string representation.
-    FieldSpec(PgType.INET, false),
-    FieldSpec(PgType.INET, true)
-];
+import dunit;
 
-enum FormatCode[] testTableRowFormats = FSpecsToFCodes!(testTableSpec);
+import dpeq;
 
-alias TestTupleT = TupleForSpec!testTableSpec;
 
-string createTableCommand()
+final class DebugSocket: StdSocketTransport
 {
-    string res = "CREATE TABLE dpeq_test (";
-    string[] colDefs;
-    foreach (i, col; aliasSeqOf!testTableSpec)
+    this(ConnectParameters params)
     {
-        colDefs ~= "col" ~ i.to!string ~ " " ~
-            col.typeId.pgTypeName ~ (col.nullable ? "" : " NOT NULL");
-    }
-    res ~= colDefs.join(", ") ~ ");";
-    writeln("table will be created with query: ", res);
-    return res;
-}
-
-string insertCommand()
-{
-    string res = "INSERT INTO dpeq_test (";
-    string[] colDefs;
-    foreach (i, col; aliasSeqOf!testTableSpec)
-        colDefs ~= "col" ~ i.to!string;
-    res ~= colDefs.join(", ") ~ ") VALUES (";
-    string[] parDefs;
-    foreach (i, col; aliasSeqOf!testTableSpec)
-        parDefs ~= "$" ~ (i + 1).to!string;
-    res ~= parDefs.join(", ") ~ ") RETURNING *;";
-    writeln("insert will be ran with query: ", res);
-    return res;
-}
-
-// uncomment writefln to receive verbose protocol logging
-alias ConT = PSQLConnection!(StdSocket);//, writefln);
-
-void createTestSchema(ConT)(ConT con)
-{
-    con.putSimpleQuery(createTableCommand());
-    con.flush();
-    con.getQueryResults();
-}
-
-void main()
-{
-    auto con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres", "r00tme", "dpeqtestdb"));
-    createTestSchema(con);
-    auto ps = new PreparedStatement!ConT(con, insertCommand(),
-        testTableSpec.length, false, null);
-    auto portal = new Portal!ConT(ps, false);
-    ps.postParseMessage();
-
-    TestTupleT sentTuple = TestTupleT(
-        false,
-        Nullable!bool(true),
-        123L,
-        Nullable!long(333333L),
-        cast(short) 3,
-        Nullable!short(4),
-        6,
-        Nullable!int(-3),
-        "123",
-        Nullable!string(),  // null
-        "asdjaofdfad",
-        Nullable!string("12393"),
-        randomUUID(),
-        Nullable!UUID(randomUUID()),
-        3.14f,
-        Nullable!float(float.infinity),
-        -3.14,
-        Nullable!double(),  // null
-        "192.168.0.1",
-        Nullable!string("127.0.0.1")
-    );
-
-    portal.bind!(testTableSpec, testTableRowFormats)(sentTuple.expand);
-    portal.execute();
-
-    con.sync();
-    con.flush();
-    auto res = con.getQueryResults();
-    assert(res.blocks.length == 1);
-    assert(res.blocks[0].state == RowBlockState.complete);
-    assert(res.blocks[0].commandTag == "INSERT 0 1");
-
-    FieldDescription[] rowDesc = res.blocks[0].rowDesc[].array;
-    writeln("received field descriptions:");
-    foreach (vald; rowDesc)
-    {
-        writeln(["name: " ~ vald.name, "type: " ~ vald.type.to!string,
-            "format code: " ~ vald.formatCode.to!string].join(", "));
+        super(params);
     }
 
-    // convert result to tuples
-    auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
-    foreach (row; rows)
+    override void send(const(ubyte)[] buf)
     {
-        import std.range: iota;
-        writeln("\nrow received, it's tuple representation:");
-        foreach (i; aliasSeqOf!(iota(0, testTableSpec.length).array))
+        writeln("sending ", buf.length, " bytes: ", buf);
+        super.send(buf);
+    }
+
+    override void receive(ubyte[] dest)
+    {
+        writeln("receiving ", dest.length, " bytes...");
+        super.receive(dest);
+    }
+}
+
+final class DebugPSQLConnection: PSQLConnection
+{
+    this(ITransport transport, SSLPolicy sslPolicy)
+    {
+        super(transport, sslPolicy);
+    }
+
+    override RawBackendMessage receiveMessage()
+    {
+        RawBackendMessage msg = super.receiveMessage();
+        writeln("received " ~ msg.toString);
+        return msg;
+    }
+}
+
+
+class PSQLConnectionTests
+{
+    mixin UnitTest;
+
+    DebugPSQLConnection connection;
+    DebugSocket transport;
+    PasswordAuthenticator password;
+    string[string] startupParams;
+
+    @BeforeEach
+    public void setUp()
+    {
+        transport = new DebugSocket(
+            ConnectParameters(
+                environment.get("TEST_DATABASE_HOST", "localhost"),
+                environment.get("TEST_DATABASE_PORT", "5432").to!ushort
+            ));
+        transport.receiveTimeout = seconds(1);
+        transport.sendTimeout = seconds(1);
+        transport.connect();
+        connection = new DebugPSQLConnection(transport, SSLPolicy.NEVER);
+        startupParams.clear();
+        startupParams["user"] = environment.get("TEST_USER", "postgres");
+        startupParams["database"] = environment.get("TEST_DATABASE", "postgres");
+        password = new PasswordAuthenticator(environment.get("TEST_PASSWORD", "postgres"));
+
+        passwordAuth();
+    }
+
+    private void passwordAuth()
+    {
+        connection.handshakeAndAuthenticate(startupParams, password);
+        assertTrue(!connection.closed);
+        assertTrue(connection.authenticated);
+        assertTrue(connection.isOpen);
+        assertTrue(connection.backendKeyData.processId != 0);
+        assertTrue(connection.backendKeyData.cancellationKey != 0);
+        assertEquals(TransactionStatus.IDLE, connection.lastTransactionStatus);
+        writeln("Parameter statuses: ", connection.parameterStatuses);
+    }
+
+    @AfterEach
+    public void tearDown()
+    {
+        if (connection)
+            connection.close();
+    }
+
+    @Test
+    void testSimpleQuerySelectVersion()
+    {
+        RawFrontendMessage query = buildQueryMessage("SELECT version()");
+        connection.sendMessage(query);
+
+        CommandComplete commandComplele;
+        RowDescription rowDescription;
+        DataRow dataRow;
+
+        PollCallback poller = (PSQLConnection con, RawBackendMessage msg)
         {
-            writeln(rowDesc[i].name, " = ", row[i]);
-        }
-        assert(row == sentTuple, "Sent and recieved tuples don't match");
+            assert(con is connection);
+            switch (msg.type)
+            {
+                case BackendMessageType.CommandComplete:
+                    commandComplele = CommandComplete.parse(msg.data);
+                    break;
+                case BackendMessageType.RowDescription:
+                    rowDescription = RowDescription.parse(msg.data);
+                    break;
+                case BackendMessageType.DataRow:
+                    dataRow = DataRow.parse(msg.data);
+                    break;
+                default:
+            }
+            return PollAction.CONTINUE;
+        };
+
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(poller));
+        assertEquals(TransactionStatus.IDLE, connection.lastTransactionStatus);
+        assertEquals("SELECT 1", commandComplele.commandTag);
+        assertEquals(KnownTypeOID.TEXT, rowDescription.fieldDescriptions[0].type);
+        assertEquals(FormatCode.TEXT, rowDescription.fieldDescriptions[0].formatCode);
+        assertTrue(!dataRow.columns[0].isNull);
+
+        string returnedVersion;
+        deserializeStringField(
+            dataRow.columns[0].isNull,
+            dataRow.columns[0].value,
+            &returnedVersion);
+        writeln("version() returned: ", returnedVersion);
     }
 
-    // convert result to variants
-    auto variantRows = blockToVariants(res.blocks[0]);
-    foreach (row; variantRows)
+    @Test
+    void testSimpleQueryErrorResponse()
     {
-        writeln("\nrow received, it's variant representation:");
-        foreach (col; row)
-            writeln(col.type, " ", col.toString);
-    }
-
-    // close connection
-    con.terminate();
-
-
-    // other tests:
-    transactionExample();
-    notifyExample();
-    exceptionExample();
-    cancellationExample();
-    copyInExample();
-
-    // please keep this test the last one, so I can run most tests without Unix
-    // sockets available.
-    version(Posix) unixSocketExample();
-}
-
-
-
-/// example wich demonstrates implicit transaction scope of EQ prtocol
-void transactionExample()
-{
-    void threadFunc1()
-    {
-        auto con = new ConT(
-            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-            "r00tme", "dpeqtestdb"));
-        // parse and bind and execute for SELECT FOR UPDATE
+        RawFrontendMessage query = buildQueryMessage("SELECT nonexistingFunction()");
+        connection.sendMessage(query);
+        try
         {
-            // unnamed prepared statement
-            auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test FOR UPDATE;", short(0));
-            ps.parse();
-            // unnamed portal
-            auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind();
-            pt.execute(false);
-            // since we don't send sync (wich would close the implicit transaction),
-            // backend will not return result of this select until we request it
-            // via Flush message
-            con.putFlushMessage();
-            con.flush();
+            connection.pollMessages(null);
+            assert(false);
         }
-        Thread.sleep(msecs(500));   // sleep in order to demonstrate row locking
-        // we now update all (there is only one) row
+        catch (PSQLErrorResponseException erex)
         {
-            // unnamed prepared statement
-            auto ps = scoped!(PreparedStatement!ConT)(con,
-                "UPDATE dpeq_test SET col0 = 't';", short(0));
-            ps.parse();
-            // unnamed portal
-            auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind();
-            pt.execute(false);
-            // this Sync effectively commits and drops the lock on table row
-            con.sync();
-            con.flush();
+            assertEquals("ERROR", erex.error.severity);
+            assertEquals("ERROR", erex.error.severityV);
+            assertEquals("42883", erex.error.code[]);
         }
-        getQueryResults(con);
-        con.terminate();
     }
 
-
-    void threadFunc2()
+    @Test
+    void testSimpleQueryEmptyQueryResponse()
     {
-        Thread.sleep(msecs(250));   // let first thread aquire lock
-        auto con = new ConT(
-            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-            "r00tme", "dpeqtestdb"));
+        RawFrontendMessage query = buildQueryMessage("");
+        connection.sendMessage(query);
+        bool receivedEmptyQuery;
 
-        // simple select to ensure old false value
+        PollCallback poller = (PSQLConnection con, RawBackendMessage msg)
         {
-            // unnamed prepared statement
-            auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test;", short(0));
-            ps.parse();
-            // unnamed portal
-            auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind(testTableRowFormats);
-            pt.execute(false);
-            con.sync();
-            con.flush();
-        }
+            switch (msg.type)
+            {
+                case BackendMessageType.CommandComplete:
+                    assert(0, "should not have been received");
+                case BackendMessageType.EmptyQueryResponse:
+                    receivedEmptyQuery = true;
+                    break;
+                default:
+            }
+            return PollAction.CONTINUE;
+        };
 
-        auto res = getQueryResults(con);
-        auto rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
-        assert(rows.front[0] == false, "Unexpected 'true' in first column");
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(poller));
+        assertEquals(TransactionStatus.IDLE, connection.lastTransactionStatus);
+        assertTrue(receivedEmptyQuery);
+    }
 
-        // parse and bind and execute for SELECT FOR UPDATE
+    @Test
+    void testSimpleQueryTransaction()
+    {
+        RawFrontendMessage query = buildQueryMessage(
+            "BEGIN;
+            CREATE TABLE tempTable (pk integer PRIMARY KEY);");
+        connection.sendMessage(query);
+
+        CommandComplete commandComplele;
+        int commandsCompleted;
+
+        PollCallback poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                assert(con is connection);
+                switch (msg.type)
+                {
+                    case BackendMessageType.CommandComplete:
+                        commandComplele = CommandComplete.parse(msg.data);
+                        if (commandsCompleted == 0)
+                            assertEquals("BEGIN", commandComplele.commandTag);
+                        if (commandsCompleted == 1)
+                            assertEquals("CREATE TABLE", commandComplele.commandTag);
+                        if (++commandsCompleted > 2)
+                            assert(0, "unexpected CommandComplete message");
+                        break;
+                    default:
+                }
+                return PollAction.CONTINUE;
+            };
+
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(poller));
+        assertEquals(2, commandsCompleted);
+        assertEquals(TransactionStatus.INSIDE, connection.lastTransactionStatus);
+
+        connection.sendMessage(buildQueryMessage("ROLLBACK"));
+
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                assert(con is connection);
+                switch (msg.type)
+                {
+                    case BackendMessageType.CommandComplete:
+                        commandComplele = CommandComplete.parse(msg.data);
+                        if (commandsCompleted == 2)
+                            assertEquals("ROLLBACK", commandComplele.commandTag);
+                        if (++commandsCompleted > 3)
+                            assert(0, "unexpected CommandComplete message");
+                        break;
+                    default:
+                }
+                return PollAction.CONTINUE;
+            };
+
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(poller));
+        assertEquals(3, commandsCompleted);
+        assertEquals(TransactionStatus.IDLE, connection.lastTransactionStatus);
+    }
+
+    @Test
+    void testQueryCancellation()
+    {
+        RawFrontendMessage query = buildQueryMessage("SELECT pg_sleep(10)");
+        connection.sendMessage(query);
+        Thread.sleep(msecs(50));
+        connection.cancelRequest();
+        try
         {
-            // unnamed prepared statement
-            auto ps = scoped!(PreparedStatement!ConT)(con,
-                "SELECT * FROM dpeq_test FOR UPDATE;", short(0));
-            ps.parse();
-            // unnamed portal
-            auto pt = scoped!(Portal!ConT)(ps, false);
-            pt.bind(testTableRowFormats);
-            pt.execute(false);
-            con.sync();     // releases row lock of thread 2
-            con.flush();
+            connection.pollMessages(null);
         }
-
-        // this returns approx after 2 seconds, right after first thread commits
-        // and releases row locks
-        res = getQueryResults(con);
-        rows = blockToTuples!testTableSpec(res.blocks[0].dataRows);
-        assert(rows.front[0] == true,
-            "First thread's commit is not visible in second thread");
-        con.terminate();
-    }
-
-    auto thread1 = new Thread(&threadFunc1).start();
-    auto thread2 = new Thread(&threadFunc2).start();
-
-    thread1.join();
-    thread2.join();
-}
-
-
-
-
-/// example wich demonstrates PSQL notify messages.
-void notifyExample()
-{
-    void threadFunc1()
-    {
-        ConT con = new ConT(
-            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-            "r00tme", "dpeqtestdb"));
-        // make sure second thread had time to connect and LISTEN our channel
-        Thread.sleep(msecs(250));
-        con.putSimpleQuery("NOTIFY chan1, 'Payload1337';");
-        con.flush();
-        con.pollMessages(null);
-        con.terminate();
-    }
-
-    void threadFunc2()
-    {
-        ConT con = new ConT(
-            BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-            "r00tme", "dpeqtestdb"));
-        Notification inbox;
-        con.notificationCallback = (ConT c, Notification n) { inbox = n; return true; };
-        con.putSimpleQuery("LISTEN chan1;");
-        con.flush();
-        con.pollMessages(null);
-        // blocks for approx half a second
-        con.pollMessages(null);
-        con.terminate();
-        writeln("Received notification ", inbox);
-        assert(inbox.channel == "chan1");
-        assert(inbox.payload == "Payload1337");
-    }
-
-    auto thread1 = new Thread(&threadFunc1).start();
-    auto thread2 = new Thread(&threadFunc2).start();
-
-    thread1.join();
-    thread2.join();
-}
-
-
-
-void exceptionExample()
-{
-    ConT con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-        "r00tme", "dpeqtestdb"));
-    con.putSimpleQuery("SELECT * from nonexisting_table;");
-    con.flush();
-    try
-    {
-        con.pollMessages(null);
-        assert(0, "Should have thrown at this point");
-    }
-    catch (PsqlErrorResponseException e)
-    {
-        writeln("Received ErrorResponse: ", e.notice);
-        /* Prints:
-        Received ErrorResponse: Notice("ERROR", "ERROR", "42P01", "relation
-        \"nonexisting_table\" does not exist", "", "", "15", "", "", "", "",
-        "", "", "", "", "parse_relation.c", "1160", "parserOpenTable")
-        */
-    }
-    con.terminate();
-}
-
-
-
-void cancellationExample()
-{
-    ConT con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-        "r00tme", "dpeqtestdb"));
-    writeln("cancellation data: ", con.processId, ", ", con.cancellationKey);
-    con.putSimpleQuery("SELECT pg_sleep(0.5);");
-    con.flush();
-    Thread.sleep(msecs(50));
-    writeln("cancelling request");
-    con.cancelRequest();
-    try
-    {
-        con.pollMessages(null);
-        assert(0, "Should have thrown at this point");
-    }
-    catch (PsqlErrorResponseException e)
-    {
-        writeln("Received ErrorResponse: ", e.notice);
-        /* Prints:
-        Received ErrorResponse: Notice("ERROR", "ERROR", "57014", "canceling
-        statement due to user request", "", "", "", "", "", "", "", "", "", "",
-        "", "postgres.c", "2988", "ProcessInterrupts")
-        */
-    }
-    con.terminate();
-}
-
-
-version(Posix)
-{
-    /// example wich demonstrates connection through Unix-domain socket
-    void unixSocketExample()
-    {
-        // Default BackendParams.host is set to
-        // /var/run/postgresql/.s.PGSQL.5432
-        auto con = new ConT(BackendParams());
-        con.putSimpleQuery("select version();");
-        con.flush();
-        auto res = con.getQueryResults();
-        auto firstRow = blockToVariants(res.blocks[0])[0];
-        writeln("psql version: ", firstRow.front);
-    }
-}
-
-
-void copyInExample()
-{
-    ConT con = new ConT(
-        BackendParams("127.0.0.1", cast(ushort)5432, "postgres",
-        "r00tme", "dpeqtestdb"));
-    con.putSimpleQuery("CREATE TABLE copyintable (id bigint PRIMARY KEY, str varchar);");
-    con.flush();
-    con.pollMessages(null);
-    con.putSimpleQuery("COPY copyintable (id, str) FROM STDIN;");
-    con.flush();
-    bool receivedCopyResponse;
-    // backend answers with CopyInResponse message.
-    con.pollMessages((Message msg) nothrow @safe {
-        if (msg.type == BackendMessageType.CopyInResponse)
+        catch (PSQLErrorResponseException perex)
         {
-            receivedCopyResponse = true;
-            return true;
+            assertEquals("57014", perex.error.code[]);
+            assertEquals("canceling statement due to user request", perex.error.message);
         }
-        return false;
-    });
-    assert(receivedCopyResponse);
-    con.putCopyDataMessage(cast(ubyte[]) "1\tstring1\n3\tstring2\n15\t\\N");
-    con.putCopyDoneMessage();
-    con.flush();
-    con.pollMessages(null);
+    }
 
-    // let's check the result
-    con.putSimpleQuery("SELECT * FROM copyintable");
-    con.flush();
+    @Test
+    void testUnprovokedQueryCancellation()
+    {
+        connection.cancelRequest();
+    }
 
-    // test resulting rows
-    auto res = con.getQueryResults();
-    assert(res.blocks.length == 1);
-    assert(res.blocks[0].state == RowBlockState.complete);
-    auto variantRows = blockToVariants(res.blocks[0]);
-    assert(variantRows.length == 3);
-    auto row = variantRows[0];
-    assert(row.front == long(1));
-    row.popFront();
-    assert(row.front == "string1");
-    row = variantRows[1];
-    assert(row.front == long(3));
-    row.popFront();
-    assert(row.front == "string2");
-    row = variantRows[2];
-    assert(row.front == long(15));
-    row.popFront();
-    assert(row.front.isNull);
+    @Test
+    void testExtendedQueryUnnamed()
+    {
+        int[] paramTypes = [KnownTypeOID.INT, KnownTypeOID.REAL,
+            KnownTypeOID.BIGINT, KnownTypeOID.UUID];
+        RawFrontendMessage fmsg = buildParseMessage(
+            "", "SELECT $1::integer, $2::real, $3::bigint, $4::uuid", paramTypes);
+        connection.sendMessage(fmsg);
+        connection.sendMessage(buildFlushMessage());
 
-    con.terminate();
+        PollCallback poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.ParseComplete:
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
 
-    writeln("copyInExample OK");
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+
+        connection.sendMessage(buildDescribeMessage(
+            PreparedStatementOrPortal.PREPARED_STATEMENT, ""));
+        connection.sendMessage(buildFlushMessage());
+
+        ParameterDescription paramDescr;
+        RowDescription rowDescr;
+
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.ParameterDescription:
+                        paramDescr = ParameterDescription.parse(msg.data);
+                        return PollAction.CONTINUE;
+                    case BackendMessageType.RowDescription:
+                        rowDescr = RowDescription.parse(msg.data);
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+        assertEquals(paramTypes, paramDescr.paramTypeOIDs);
+        assertEquals(paramTypes, rowDescr.fieldDescriptions.map!(fd => fd.type).array);
+
+        int p1 = 42;
+        float p2 = float.infinity;
+        long p3 = long.max;
+        UUID p4 = UUID("beefb950-6c85-4ec6-b448-4ab38fa40825");
+
+        fmsg = buildBindMessage("", "",
+            [BindParam(&p1, FormatCode.BINARY,
+                cast(FieldSerializingFunction) &serializePrimitiveFieldBinary!int),
+             BindParam(&p2, FormatCode.BINARY,
+                cast(FieldSerializingFunction) &serializePrimitiveFieldBinary!float),
+             BindParam(&p3, FormatCode.BINARY,
+                cast(FieldSerializingFunction) &serializePrimitiveFieldBinary!long),
+             BindParam(&p4, FormatCode.BINARY,
+                cast(FieldSerializingFunction) &serializeUUIDFieldBinary)],
+             [FormatCode.BINARY]);
+
+        connection.sendMessage(fmsg);
+        connection.sendMessage(buildExecuteMessage(""));
+        connection.sendMessage(buildSyncMessage());
+
+        DataRow[] rows;
+        bool bindCompleteReceived;
+        CommandComplete comCmpl;
+
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.BindComplete:
+                        bindCompleteReceived = true;
+                        return PollAction.CONTINUE;
+                    case BackendMessageType.DataRow:
+                        rows ~= DataRow.parse(msg.data);
+                        return PollAction.CONTINUE;
+                    case BackendMessageType.CommandComplete:
+                        comCmpl = CommandComplete.parse(msg.data);
+                        return PollAction.CONTINUE;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(poller));
+        assertTrue(bindCompleteReceived);
+        assertEquals(1, rows.length);
+        assertEquals("SELECT 1", comCmpl.commandTag);
+
+        int r1;
+        float r2;
+        long r3;
+        UUID r4;
+        deserializePrimitiveField!(int, FormatCode.BINARY)(
+            rows[0].columns[0].isNull, rows[0].columns[0].value, &r1);
+        deserializePrimitiveField!(float, FormatCode.BINARY)(
+            rows[0].columns[1].isNull, rows[0].columns[1].value, &r2);
+        deserializePrimitiveField!(long, FormatCode.BINARY)(
+            rows[0].columns[2].isNull, rows[0].columns[2].value, &r3);
+        deserializeUUIDField!(FormatCode.BINARY)(
+            rows[0].columns[3].isNull, rows[0].columns[3].value, &r4);
+
+        assertEquals(p1, r1);
+        assertEquals(p2, r2);
+        assertEquals(p3, r3);
+        assertEquals(p4, r4);
+    }
+
+    @Test
+    void testListenNotify()
+    {
+        DebugPSQLConnection connection2;
+        ITransport transport2;
+        transport2 = transport.duplicate();
+        connection2 = new DebugPSQLConnection(transport2, SSLPolicy.NEVER);
+        scope(exit) connection2.close();
+        connection2.handshakeAndAuthenticate(startupParams, password);
+
+        RawFrontendMessage query = buildQueryMessage("LISTEN channel");
+        connection.sendMessage(query);
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(null));
+
+        query = buildQueryMessage("NOTIFY channel, 'payload'");
+        connection2.sendMessage(query);
+
+        connection.notificationCallback =
+            (PSQLConnection receiver, NotificationResponse message)
+            {
+                assertEquals(connection2.backendKeyData.processId, message.procId);
+                assertEquals("channel", message.channel);
+                assertEquals("payload", message.payload);
+                return PollAction.BREAK;
+            };
+
+        assertEquals(PollResult.RFQ_RECEIVED, connection2.pollMessages(null));
+        assertEquals(
+            PollResult.NOTIFICATION_CALLBACK_BREAK,
+            connection.pollMessages(null));
+    }
+
+    @Test
+    void testCopyMode()
+    {
+        RawFrontendMessage query = buildQueryMessage(
+            "CREATE TABLE IF NOT EXISTS raw_ints(row1 integer);
+             DELETE FROM raw_ints;
+             COPY raw_ints (row1) FROM STDIN;");
+        connection.sendMessage(query);
+
+        PollCallback poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.CopyInResponse:
+                        CopyResponse cr = CopyResponse.parse(msg.data);
+                        assertEquals(0, cr.overallFormat);
+                        assertEquals([short(0)], cr.formatCodes);
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+
+        for (int i = 0; i < 1000; i++)
+            connection.sendMessage(
+                buildCopyDataMessage(cast(const(ubyte)[]) (i.to!string ~ "\n")));
+        connection.sendMessage(buildCopyDoneMessage());
+
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.CommandComplete:
+                        CommandComplete cc = CommandComplete.parse(msg.data);
+                        assertEquals("COPY 1000", cc.commandTag);
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(null));
+
+        query = buildQueryMessage("
+            COPY raw_ints (row1) TO STDOUT");
+        connection.sendMessage(query);
+
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.CopyOutResponse:
+                        CopyResponse cr = CopyResponse.parse(msg.data);
+                        assertEquals(0, cr.overallFormat);
+                        assertEquals([cast(short) FormatCode.TEXT], cr.formatCodes);
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+
+        CopyData[] rows;
+        poller =
+            (PSQLConnection con, RawBackendMessage msg)
+            {
+                switch (msg.type)
+                {
+                    case BackendMessageType.CopyData:
+                        CopyData cd = CopyData.parse(msg.data);
+                        rows ~= cd;
+                        return PollAction.CONTINUE;
+                    case BackendMessageType.CopyDone:
+                        return PollAction.BREAK;
+                    default:
+                        return PollAction.CONTINUE;
+                }
+            };
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
+        assertEquals(1000, rows.length);
+        assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(null));
+
+        for (int i = 0; i < 1000; i++)
+            assertEquals(i, (cast(string) rows[i].data).strip.to!int);
+    }
+
 }
+
+mixin Main;

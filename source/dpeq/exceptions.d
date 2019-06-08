@@ -1,78 +1,77 @@
 /**
 Exceptions, thrown by dpeq code.
 
-Copyright: Copyright Boris-Barboris 2017.
+Copyright: Boris-Barboris 2017-2019.
 License: MIT
 Authors: Boris-Barboris
 */
 
 module dpeq.exceptions;
 
-import dpeq.result: Notice;
+import std.exception: basicExceptionCtors;
+
+public import dpeq.messages: NoticeOrError;
 
 
-/// mixes in standard exception constructors that call super correctly
-mixin template ExceptionConstructors()
+class PSQLClientException: Exception
 {
-    @safe pure nothrow this(string message,
-                            Throwable next,
-                            string file =__FILE__,
-                            size_t line = __LINE__)
-    {
-        super(message, next, file, line);
-    }
-
-    @safe pure nothrow this(string message,
-                            string file =__FILE__,
-                            size_t line = __LINE__,
-                            Throwable next = null)
-    {
-        super(message, file, line, next);
-    }
+    mixin basicExceptionCtors;
 }
 
-class PsqlClientException: Exception
+class PSQLAuthenticationException: PSQLClientException
 {
-    mixin ExceptionConstructors;
+    mixin basicExceptionCtors;
 }
 
-class PsqlSerializationException: PsqlClientException
+class PSQLSerializationException: PSQLClientException
 {
-    mixin ExceptionConstructors;
+    mixin basicExceptionCtors;
 }
 
-class PsqlConnectionClosedException: PsqlSocketException
+/// Exception mostly implies violated assumptions about the form of the data
+/// being deserialized. Both frontend and backend can be guilty.
+class PSQLDeserializationException: PSQLClientException
 {
-    mixin ExceptionConstructors;
+    mixin basicExceptionCtors;
 }
 
-class PsqlSocketException: Exception
+/// Message flow or structure violation, backend is probably to blame.
+class PSQLProtocolException: PSQLClientException
 {
-    mixin ExceptionConstructors;
+    mixin basicExceptionCtors;
 }
 
-/// Thrown by $(D dpeq.PSQLConnection.pollMessages) when ErrorResponse message
-/// is received (immediately after parse or delayed until ReadyForQuery message).
-class PsqlErrorResponseException: Exception
+class PSQLSocketException: Exception
+{
+    mixin basicExceptionCtors;
+}
+
+class PSQLConnectionClosedException: PSQLSocketException
+{
+    mixin basicExceptionCtors;
+}
+
+/// Thrown by $(D dpeq.PSQLConnection) when ErrorResponse message is received.
+class PSQLErrorResponseException: Exception
 {
     /// Contents of ErrorResponse message that caused this exception.
-    Notice notice;
+    NoticeOrError error;
 
-    @safe pure nothrow this(Notice n,
+    @safe pure nothrow this(NoticeOrError e,
                             Throwable next,
                             string file =__FILE__,
                             size_t line = __LINE__)
     {
-        super(n.message, next, file, line);
-        notice = n;
+        super(e.message, next, file, line);
+        error = e;
     }
 
-    @safe pure nothrow this(Notice n,
+    @safe pure nothrow this(NoticeOrError e,
                             string file =__FILE__,
                             size_t line = __LINE__,
                             Throwable next = null)
     {
-        super(n.message, file, line, next);
-        notice = n;
+        super(e.message, file, line, next);
+        error = e;
     }
 }

@@ -1,9 +1,9 @@
 {
-  "name": "dpeq",
-  "description": "PostgreSQL extended query protocol client",
-  "license": "MIT",
-  "targetType": "library",
-  "copyright": "Copyright © 2017-2018 Boris-Barboris",
-  "homepage": "https://github.com/dpeq/",
-  "authors": ["Boris-Barboris"]
+    "name": "dpeq",
+    "description": "PostgreSQL extended query protocol client",
+    "license": "MIT",
+    "targetType": "library",
+    "copyright": "Copyright © 2017-2019 Boris-Barboris",
+    "homepage": "https://github.com/Boris-Barboris/dpeq/",
+    "authors": ["Boris-Barboris"]
 }

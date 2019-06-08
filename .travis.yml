@@ -3,13 +3,11 @@ addons:
   postgresql: "9.5"
 git:
   depth: 3
-before_script:
-  - psql -c 'create database dpeqtestdb;' -U postgres
+branches:
+  except:
+  - rewrite
 d:
   - dmd
   - ldc
 script:
   - pushd tests && dub -b debug
-  - psql -c 'drop database dpeqtestdb;' -U postgres
-  - psql -c 'create database dpeqtestdb;' -U postgres
-  - dub -b release
