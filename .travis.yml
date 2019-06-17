@@ -1,6 +1,6 @@
 language: d
 addons:
-  postgresql: "9.5"
+  postgresql: "9.6"
 git:
   depth: 3
 branches:
