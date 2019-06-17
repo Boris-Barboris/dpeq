@@ -144,7 +144,8 @@ class PSQLConnection
         enforceSSLPolicy(m_transport);
         m_transport.send(buildStartupMessage(startupParams));
         AuthenticationMessage firstResponse = receiveAuthenticationMessage(m_transport);
-        auth.authenticate(m_transport, firstResponse, startupParams);
+        if (firstResponse.protocol != AUTHENTICATION_SUCCESS)
+            auth.authenticate(m_transport, firstResponse, startupParams);
 
         PollAction pollStarupMessages(PSQLConnection that, RawBackendMessage msg)
         {
