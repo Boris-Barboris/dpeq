@@ -21,4 +21,4 @@ https://www.postgresql.org/docs/9.5/static/protocol-message-formats.html
 Many thanks to authors of https://github.com/pszturmaj/ddb and
 https://github.com/teamhackback/hb-ddb, wich gave this library inspiration.
 
-Tests are best examples, see tests/source/main.d
+To see examples, see ./tests/source/main.d
