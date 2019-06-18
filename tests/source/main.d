@@ -146,10 +146,10 @@ class PSQLConnectionTests
         assertTrue(!dataRow.columns[0].isNull);
 
         string returnedVersion;
-        deserializeStringField(
+        deserializeByteArrayField(
             dataRow.columns[0].isNull,
             dataRow.columns[0].value,
-            &returnedVersion);
+            cast(ubyte[]*) &returnedVersion);
         writeln("version() returned: ", returnedVersion);
     }
 
@@ -287,9 +287,9 @@ class PSQLConnectionTests
     void testExtendedQueryUnnamed()
     {
         int[] paramTypes = [KnownTypeOID.INT, KnownTypeOID.REAL,
-            KnownTypeOID.BIGINT, KnownTypeOID.UUID];
+            KnownTypeOID.BIGINT, KnownTypeOID.UUID, KnownTypeOID.TEXT];
         RawFrontendMessage fmsg = buildParseMessage(
-            "", "SELECT $1::integer, $2::real, $3::bigint, $4::uuid", paramTypes);
+            "", "SELECT $1::integer, $2::real, $3::bigint, $4::uuid, $5::text", paramTypes);
         connection.sendMessage(fmsg);
         connection.sendMessage(buildFlushMessage());
 
@@ -338,6 +338,7 @@ class PSQLConnectionTests
         float p2 = float.infinity;
         long p3 = long.max;
         UUID p4 = UUID("beefb950-6c85-4ec6-b448-4ab38fa40825");
+        string p5 = "some string с юникодом";
 
         fmsg = buildBindMessage("", "",
             [BindParam(&p1, FormatCode.BINARY,
@@ -347,7 +348,9 @@ class PSQLConnectionTests
              BindParam(&p3, FormatCode.BINARY,
                 cast(FieldSerializingFunction) &serializePrimitiveFieldBinary!long),
              BindParam(&p4, FormatCode.BINARY,
-                cast(FieldSerializingFunction) &serializeUUIDFieldBinary)],
+                cast(FieldSerializingFunction) &serializeUUIDFieldBinary),
+             BindParam(&p5, FormatCode.BINARY,
+                cast(FieldSerializingFunction) &serializeByteArrayField)],
              [FormatCode.BINARY]);
 
         connection.sendMessage(fmsg);
@@ -386,6 +389,8 @@ class PSQLConnectionTests
         float r2;
         long r3;
         UUID r4;
+        string r5;
+
         deserializePrimitiveField!(int, FormatCode.BINARY)(
             rows[0].columns[0].isNull, rows[0].columns[0].value, &r1);
         deserializePrimitiveField!(float, FormatCode.BINARY)(
@@ -394,11 +399,14 @@ class PSQLConnectionTests
             rows[0].columns[2].isNull, rows[0].columns[2].value, &r3);
         deserializeUUIDField!(FormatCode.BINARY)(
             rows[0].columns[3].isNull, rows[0].columns[3].value, &r4);
+        deserializeByteArrayField(
+            rows[0].columns[4].isNull, rows[0].columns[4].value, cast(ubyte[]*) &r5);
 
         assertEquals(p1, r1);
         assertEquals(p2, r2);
         assertEquals(p3, r3);
         assertEquals(p4, r4);
+        assertEquals(p5, r5);
     }
 
     @Test
@@ -458,9 +466,9 @@ class PSQLConnectionTests
             };
         assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
 
-        for (int i = 0; i < 1000; i++)
+        for (int i = 0; i < 50; i++)
             connection.sendMessage(
-                buildCopyDataMessage(cast(const(ubyte)[]) (i.to!string ~ "\n")));
+                buildCopyDataMessage(cast(ubyte[]) (i.to!string ~ "\n")));
         connection.sendMessage(buildCopyDoneMessage());
 
         poller =
@@ -470,7 +478,7 @@ class PSQLConnectionTests
                 {
                     case BackendMessageType.CommandComplete:
                         CommandComplete cc = CommandComplete.parse(msg.data);
-                        assertEquals("COPY 1000", cc.commandTag);
+                        assertEquals("COPY 50", cc.commandTag);
                         return PollAction.BREAK;
                     default:
                         return PollAction.CONTINUE;
@@ -518,10 +526,10 @@ class PSQLConnectionTests
                 }
             };
         assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
-        assertEquals(1000, rows.length);
+        assertEquals(50, rows.length);
         assertEquals(PollResult.RFQ_RECEIVED, connection.pollMessages(null));
 
-        for (int i = 0; i < 1000; i++)
+        for (int i = 0; i < 50; i++)
             assertEquals(i, (cast(string) rows[i].data).strip.to!int);
     }
 

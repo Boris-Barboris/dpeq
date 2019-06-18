@@ -43,7 +43,7 @@ value wich corresponds to NULL.
 Function SHOULD throw PSQLDeserializationException in case of errors.
 */
 alias FieldDeserializingFunction =
-    void function(bool isNull, const(ubyte)[] from, void* dest);
+    void function(bool isNull, ubyte[] from, void* dest);
 
 
 //
@@ -57,6 +57,7 @@ int serializePrimitiveFieldBinary(T)(
         return -1;
     if (calculateLength)
         return cast(int)T.sizeof;
+    assert(dest);
     (*dest)[0 .. T.sizeof] = nativeToBigEndian!T(*value);
     *dest = (*dest)[T.sizeof .. $];
     return T.sizeof;
@@ -79,6 +80,9 @@ int serializeByteArrayField(
         return -1;
     if (value.length == 0)
         return 0;
+    if (calculateLength)
+        return value.length.to!int;
+    assert(dest);
     enforce!PSQLSerializationException(
         value.length < cast(size_t)int.max - 1, "array too long to serialize");
     (*dest)[0 .. value.length] = (*value)[];
@@ -87,7 +91,7 @@ int serializeByteArrayField(
 }
 
 int serializeNullableByteArrayField(
-    const Nullable!(const(ubyte)[]) * value, ubyte[] * dest, bool calculateLength = false)
+    const Nullable!(ubyte[]) * value, ubyte[] * dest, bool calculateLength = false)
 {
     if (value is null || value.isNull)
         return -1;
@@ -101,6 +105,7 @@ int serializeUUIDFieldBinary(
         return -1;
     if (calculateLength)
         return cast(int)UUID.sizeof;
+    assert(dest);
     (*dest)[0 .. UUID.sizeof] = value.data[];
     *dest = (*dest)[UUID.sizeof .. $];
     return cast(int)UUID.sizeof;
@@ -146,7 +151,7 @@ void serializePrimitiveConsume(T)(T value, ref ubyte[] dest) nothrow
 //
 
 /// Simple deserialization of some numeric type. Not a FieldDeserializingFunction.
-T asPrimitive(T = int)(const(ubyte)[] from)
+T asPrimitive(T = int)(ubyte[] from)
 {
     enforce!PSQLDeserializationException(
         from.length >= T.sizeof, "unexpected end of buffer");
@@ -155,7 +160,7 @@ T asPrimitive(T = int)(const(ubyte)[] from)
 
 /// Simple deserialization of some numeric type. Not a FieldDeserializingFunction.
 /// Moves 'front' of 'from' slice forward by T.sizeof bytes.
-T consumePrimitive(T = int)(ref immutable(ubyte)[] from)
+T consumePrimitive(T = int)(ref ubyte[] from)
 {
     T res = asPrimitive!T(from);
     from = from[T.sizeof .. $];
@@ -164,7 +169,7 @@ T consumePrimitive(T = int)(ref immutable(ubyte)[] from)
 
 /// Deserialize C-String and consume it's length and zero terminator
 /// from slice 'from'.
-string consumeCString(ref immutable(ubyte)[] from)
+string consumeCString(ref ubyte[] from)
 {
     size_t tookBytes;
     string res = deserializeCString(from, tookBytes);
@@ -184,7 +189,7 @@ private bool to(T: bool)(string s)
 }
 
 void deserializePrimitiveField(T, FormatCode formatCode)(
-    bool isNull, immutable(ubyte)[] from, T* dest)
+    bool isNull, ubyte[] from, T* dest)
 {
     assert(dest !is null);
     enforce!PSQLDeserializationException(!isNull,
@@ -202,7 +207,7 @@ void deserializePrimitiveField(T, FormatCode formatCode)(
 }
 
 void deserializeNullablePrimitiveField(T, FormatCode formatCode)(
-    bool isNull, immutable(ubyte)[] from, Nullable!T * dest)
+    bool isNull, ubyte[] from, Nullable!T * dest)
 {
     assert(dest !is null);
     if (isNull)
@@ -216,35 +221,36 @@ void deserializeNullablePrimitiveField(T, FormatCode formatCode)(
 }
 
 /// Assigns 'dest' to 'from', re-using message memory buffer.
-void deserializeStringField(
-    bool isNull, immutable(ubyte)[] from, string* dest)
+void deserializeByteArrayField(
+    bool isNull, ubyte[] from, ubyte[] * dest)
 {
     assert(dest !is null);
-    enforce!PSQLDeserializationException(!isNull, "null passed to non-nullable deserializer");
+    enforce!PSQLDeserializationException(
+        !isNull, "null passed to non-nullable deserializer");
     if (from.length == 0)
     {
-        *dest = "";
+        (*dest).length = 0;
         return;
     }
-    *dest = cast(string) from;
+    *dest = cast(ubyte[]) from;
 }
 
-void deserializeNullableStringField(
-    bool isNull, immutable(ubyte)[] from, Nullable!string * dest)
+void deserializeNullableByteArrayField(
+    bool isNull, ubyte[] from, Nullable!(ubyte[]) * dest)
 {
     assert(dest !is null);
     if (isNull)
     {
-        *dest = Nullable!string();
+        *dest = Nullable!(ubyte[])();
         return;
     }
-    string res;
-    deserializeStringField(false, from, &res);
-    *dest = Nullable!string(res);
+    ubyte[] res;
+    deserializeByteArrayField(false, from, &res);
+    *dest = Nullable!(ubyte[])(res);
 }
 
 /// Deserialize zero-terminated string of unknown length from byte buffer.
-string deserializeCString(const(ubyte)[] from, out size_t tookBytes)
+string deserializeCString(ubyte[] from, out size_t tookBytes)
 {
     enforce!PSQLDeserializationException(from.length > 0, "unexpected end of buffer");
     size_t l = 0;
@@ -261,7 +267,7 @@ string deserializeCString(const(ubyte)[] from, out size_t tookBytes)
 }
 
 void deserializeUUIDField(FormatCode formatCode)(
-    bool isNull, immutable(ubyte)[] from, UUID* dest)
+    bool isNull, ubyte[] from, UUID* dest)
 {
     assert(dest !is null);
     enforce!PSQLDeserializationException(!isNull, "null passed to non-nullable deserializer");
@@ -269,7 +275,7 @@ void deserializeUUIDField(FormatCode formatCode)(
     {
         enforce!PSQLDeserializationException(from.length == UUID.sizeof,
             "field length mismatch");
-        const(ubyte)[UUID.sizeof] staticArr = from[0 .. UUID.sizeof];
+        ubyte[UUID.sizeof] staticArr = from[0 .. UUID.sizeof];
         *dest = UUID(staticArr);
     }
     else static if (formatCode == FormatCode.TEXT)
@@ -279,7 +285,7 @@ void deserializeUUIDField(FormatCode formatCode)(
 }
 
 void deserializeNullableUUIDField(FormatCode formatCode)(
-    bool isNull, immutable(ubyte)[] from, Nullable!UUID * dest)
+    bool isNull, ubyte[] from, Nullable!UUID * dest)
 {
     assert(val !is null);
     if (isNull)

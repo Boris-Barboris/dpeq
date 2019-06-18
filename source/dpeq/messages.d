@@ -26,7 +26,7 @@ struct RawBackendMessage
 
     /// Raw message body excluding message type byte and
     /// first 4 bytes that represent length.
-    immutable(ubyte)[] data;
+    ubyte[] data;
 }
 
 /// Message that can be sent to backend.
@@ -54,9 +54,8 @@ RawBackendMessage receiveBackendMessage(IOpenTransport transport)
     enforce!PSQLProtocolException(msgLength >= 4, "invalid message length");
     if (msgLength > 4)
     {
-        ubyte[] data = new ubyte[msgLength - 4];
-        transport.receive(data);
-        res.data = cast(immutable) data;
+        res.data = new ubyte[msgLength - 4];
+        transport.receive(res.data);
     }
     return res;
 }
@@ -65,7 +64,7 @@ RawBackendMessage receiveBackendMessage(IOpenTransport transport)
 struct AuthenticationMessage
 {
     int protocol;
-    immutable(ubyte)[] data;
+    ubyte[] data;
 }
 
 AuthenticationMessage receiveAuthenticationMessage(IOpenTransport transport)
@@ -113,7 +112,7 @@ struct FieldDescription
 }
 
 /// Consume next FieldDescription message from 'data' buffer.
-private FieldDescription consumeFieldDescription(ref immutable(ubyte)[] data)
+private FieldDescription consumeFieldDescription(ref ubyte[] data)
 {
     FieldDescription result;
     result.name = data.consumeCString();
@@ -133,7 +132,7 @@ struct RowDescription
     FieldDescription[] fieldDescriptions;
 
     /// parse from RawBackendMessage.data
-    static RowDescription parse(immutable(ubyte)[] data)
+    static RowDescription parse(ubyte[] data)
     {
         RowDescription res;
         short fieldCount = data.consumePrimitive!short();
@@ -155,7 +154,7 @@ struct RowDescription
 struct DataColumn
 {
     bool isNull;
-    immutable(ubyte)[] value;
+    ubyte[] value;
 }
 
 struct DataRow
@@ -163,7 +162,7 @@ struct DataRow
     DataColumn[] columns;
 
     /// parse from RawBackendMessage.data
-    static DataRow parse(immutable(ubyte)[] data)
+    static DataRow parse(ubyte[] data)
     {
         DataRow res;
         short columnCount = data.consumePrimitive!short();
@@ -207,7 +206,7 @@ struct NotificationResponse
     string payload;
 
     /// parse from RawBackendMessage.data
-    static NotificationResponse parse(immutable(ubyte)[] data)
+    static NotificationResponse parse(ubyte[] data)
     {
         NotificationResponse res;
         res.procId = data.consumePrimitive();
@@ -223,7 +222,7 @@ struct ReadyForQuery
     TransactionStatus transactionStatus;
 
     /// Parse from RawBackendMessage.data.
-    static ReadyForQuery parse(immutable(ubyte)[] data)
+    static ReadyForQuery parse(ubyte[] data)
     {
         enforce!PSQLProtocolException(data.length == 1, "invalid message");
         return ReadyForQuery(data[0].to!TransactionStatus);
@@ -293,7 +292,7 @@ struct NoticeOrError
 
 
     /// Parse from RawBackendMessage.data.
-    static NoticeOrError parse(immutable(ubyte)[] data)
+    static NoticeOrError parse(ubyte[] data)
     {
         NoticeOrError n;
 
@@ -480,7 +479,7 @@ struct BackendKeyData
     int cancellationKey;
 
     /// Parse from RawBackendMessage.data.
-    static BackendKeyData parse(immutable(ubyte)[] data)
+    static BackendKeyData parse(ubyte[] data)
     {
         BackendKeyData res;
         enforce!PSQLProtocolException(data.length == 8);
@@ -496,7 +495,7 @@ struct ParameterStatus
     string value;
 
     /// Parse from RawBackendMessage.data.
-    static ParameterStatus parse(immutable(ubyte)[] data)
+    static ParameterStatus parse(ubyte[] data)
     {
         ParameterStatus res;
         res.name = data.consumeCString();
@@ -511,7 +510,7 @@ struct ParameterDescription
     int[] paramTypeOIDs;
 
     /// Parse from RawBackendMessage.data.
-    static ParameterDescription parse(immutable(ubyte)[] data)
+    static ParameterDescription parse(ubyte[] data)
     {
         ParameterDescription res;
         short count = data.consumePrimitive!short();
@@ -529,7 +528,7 @@ struct CommandComplete
     string commandTag;
 
     /// Parse from RawBackendMessage.data.
-    static CommandComplete parse(immutable(ubyte)[] data)
+    static CommandComplete parse(ubyte[] data)
     {
         return CommandComplete(consumeCString(data));
     }
@@ -550,7 +549,7 @@ struct CopyResponse
 
 
     /// Parse from RawBackendMessage.data.
-    static CopyResponse parse(immutable(ubyte)[] data)
+    static CopyResponse parse(ubyte[] data)
     {
         CopyResponse res;
         res.overallFormat = data.consumePrimitive!byte();
@@ -569,16 +568,16 @@ struct CopyData
     /**
     Data that forms part of a COPY data stream. Messages sent from the backend will always correspond to single data rows, but messages sent by frontends might divide the data stream arbitrarily.
     */
-    immutable(ubyte)[] data;
+    ubyte[] data;
 
     /// Parse from RawBackendMessage.data.
-    static CopyData parse(immutable(ubyte)[] data)
+    static CopyData parse(ubyte[] data)
     {
         return CopyData(data);
     }
 }
 
-RawFrontendMessage buildCopyDataMessage(const(ubyte)[] data)
+RawFrontendMessage buildCopyDataMessage(ubyte[] data)
 {
     RawFrontendMessage res;
     int length = (4 + data.length).to!int;
