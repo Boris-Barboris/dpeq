@@ -158,17 +158,19 @@ class PSQLConnectionTests
     {
         RawFrontendMessage query = buildQueryMessage("SELECT nonexistingFunction()");
         connection.sendMessage(query);
-        try
-        {
-            connection.pollMessages(null);
-            assert(false);
-        }
-        catch (PSQLErrorResponseException erex)
-        {
-            assertEquals("ERROR", erex.error.severity);
-            assertEquals("ERROR", erex.error.severityV);
-            assertEquals("42883", erex.error.code[]);
-        }
+        PollResult pr = connection.pollMessages((con, msg)
+            {
+                if (msg.type == BackendMessageType.ErrorResponse)
+                {
+                    NoticeOrError error = NoticeOrError.parse(msg.data);
+                    assertEquals("ERROR", error.severity);
+                    assertEquals("ERROR", error.severityV);
+                    assertEquals("42883", error.code[]);
+                    return PollAction.BREAK;
+                }
+                return PollAction.CONTINUE;
+            });
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, pr);
     }
 
     @Test

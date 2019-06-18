@@ -34,27 +34,29 @@ enum PollAction
 }
 
 /// Callback of this signature is invoked when a NotificationResponse
-/// message is received inside pollMessages call. Any exception
-/// will close the connection and will be rethrown.
+/// message is received inside pollMessages call. Any Throwable thrown
+/// will close the connection and will be rethrown from pollMessages.
 alias NotificationCallback = PollAction delegate(
     PSQLConnection receiver, NotificationResponse message);
 
 /// Callback of this signature is invoked when a NoticeResponse
-/// message is received inside pollMessages call. Any exception
-/// will close the connection and will be rethrown.
+/// message is received inside pollMessages call. Any Throwable thrown
+/// will close the connection and will be rethrown from pollMessages.
 alias NoticeCallback = PollAction delegate(
     PSQLConnection receiver, NoticeOrError message);
 
 /// Callback of this signature is invoked when a ParameterStatus
-/// message is received inside pollMessages call. Any exception
-/// will close the connection and will be rethrown.
+/// message is received inside pollMessages call, right after updating
+/// connection's parameterStatuses map. Any Throwable thrown
+/// will close the connection and will be rethrown from pollMessages.
+/// This callback cannot stop the poll loop.
 alias ParameterStatusCallback = void delegate(
     PSQLConnection receiver, ParameterStatus message);
 
 /// Callback of this signature is invoked when any known
-/// message besides NotificationResponse, NoticeResponse and ErrorResponse
-/// is received inside pollMessages call. Any exception
-/// will close the connection will be rethrown.
+/// message besides NotificationResponse, NoticeResponse, ParameterStatus or
+/// ReadyForQuery is received inside pollMessages call. Any Throwable thrown
+/// will close the connection will be rethrown from pollMessages.
 alias PollCallback = PollAction delegate(
     PSQLConnection receiver, RawBackendMessage message);
 
@@ -62,9 +64,9 @@ alias PollCallback = PollAction delegate(
 enum PollResult
 {
     RFQ_RECEIVED,                   /// ReadyForQuery message was received.
+    POLL_CALLBACK_BREAK,            /// pollCallback returned BREAK.
     NOTIFICATION_CALLBACK_BREAK,    /// notificationCallback returned BREAK.
-    NOTICE_CALLBACK_BREAK,          /// noticeCallback returned BREAK.
-    POLL_CALLBACK_BREAK             /// pollCallback returned BREAK.
+    NOTICE_CALLBACK_BREAK           /// noticeCallback returned BREAK.
 }
 
 
@@ -236,84 +238,67 @@ class PSQLConnection
     ParameterStatusCallback parameterStatusCallback;
 
     /** Repeatedly read messages from the transport until:
-      1). ErrorResponse is received, in wich case the PSQLErrorResponseException is thrown.
-      2). ReadyForQuery message is received.
-      3). pollCallback returns BREAK.
-      4). notificationCallback returns BREAK.
-      5). noticeCallback returns BREAK.
-      6). some callback throws. */
+      1). ReadyForQuery message is received.
+      2). pollCallback returns BREAK.
+      3). notificationCallback returns BREAK.
+      4). noticeCallback returns BREAK.
+      5). some callback throws.
+    */
     final PollResult pollMessages(scope PollCallback pollCallback)
     {
         enforce!PSQLClientException(!m_closed, "connection is closed");
-        try
+        scope(failure) close();
+        while(true)
         {
-            RawBackendMessage msg;
-            while(true)
+            RawBackendMessage msg = receiveMessage();
+            switch (msg.type)
             {
-                msg = receiveMessage();
-                switch (msg.type)
+                case BackendMessageType.ReadyForQuery:
                 {
-                    case BackendMessageType.ErrorResponse:
+                    m_lastTransactionStatus =
+                        ReadyForQuery.parse(msg.data).transactionStatus;
+                    return PollResult.RFQ_RECEIVED;
+                }
+                case BackendMessageType.NotificationResponse:
+                {
+                    if (notificationCallback)
                     {
-                        throw new PSQLErrorResponseException(
-                            NoticeOrError.parse(msg.data));
+                        PollAction action = notificationCallback(
+                            this, NotificationResponse.parse(msg.data));
+                        if (action == PollAction.BREAK)
+                            return PollResult.NOTIFICATION_CALLBACK_BREAK;
                     }
-                    case BackendMessageType.ReadyForQuery:
+                    break;
+                }
+                case BackendMessageType.NoticeResponse:
+                {
+                    if (noticeCallback)
                     {
-                        m_lastTransactionStatus =
-                            ReadyForQuery.parse(msg.data).transactionStatus;
-                        return PollResult.RFQ_RECEIVED;
+                        PollAction action = noticeCallback(
+                            this, NoticeOrError.parse(msg.data));
+                        if (action == PollAction.BREAK)
+                            return PollResult.NOTICE_CALLBACK_BREAK;
                     }
-                    case BackendMessageType.NotificationResponse:
+                    break;
+                }
+                case BackendMessageType.ParameterStatus:
+                {
+                    ParameterStatus psMsg = ParameterStatus.parse(msg.data);
+                    m_parameterStatuses[psMsg.name] = psMsg.value;
+                    if (parameterStatusCallback)
+                        parameterStatusCallback(this, psMsg);
+                    break;
+                }
+                default:
+                {
+                    if (pollCallback)
                     {
-                        if (notificationCallback)
-                        {
-                            PollAction action = notificationCallback(
-                                this, NotificationResponse.parse(msg.data));
-                            if (action == PollAction.BREAK)
-                                return PollResult.NOTIFICATION_CALLBACK_BREAK;
-                        }
-                        break;
-                    }
-                    case BackendMessageType.NoticeResponse:
-                    {
-                        if (noticeCallback)
-                        {
-                            PollAction action = noticeCallback(
-                                this, NoticeOrError.parse(msg.data));
-                            if (action == PollAction.BREAK)
-                                return PollResult.NOTICE_CALLBACK_BREAK;
-                        }
-                        break;
-                    }
-                    case BackendMessageType.ParameterStatus:
-                    {
-                        ParameterStatus psMsg = ParameterStatus.parse(msg.data);
-                        m_parameterStatuses[psMsg.name] = psMsg.value;
-                        if (parameterStatusCallback)
-                            parameterStatusCallback(this, psMsg);
-                        break;
-                    }
-                    default:
-                    {
-                        if (pollCallback)
-                        {
-                            PollAction action = pollCallback(this, msg);
-                            if (action == PollAction.BREAK)
-                                return PollResult.POLL_CALLBACK_BREAK;
-                        }
+                        PollAction action = pollCallback(this, msg);
+                        if (action == PollAction.BREAK)
+                            return PollResult.POLL_CALLBACK_BREAK;
                     }
                 }
             }
-        }
-        catch (PSQLErrorResponseException erex)
-        {
-            throw erex;
-        }
-        catch (Throwable t)
-        {
-            close();
-            throw t;
         }
     }
 

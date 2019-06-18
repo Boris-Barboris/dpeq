@@ -3,3 +3,4 @@ dub.selections.json
 .dub/
 dpeq_tests*
 dpeq.lib
+.envrc
