@@ -17,4 +17,5 @@ script:
   - pushd tests && dub -b debug
   - export IS_COCKROACH=true
   - export TEST_DATABASE_PORT=26257
+  - sleep 5
   - dub -b debug
