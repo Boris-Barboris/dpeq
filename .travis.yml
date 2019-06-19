@@ -1,6 +1,8 @@
 language: d
 addons:
   postgresql: "9.6"
+services:
+  - docker
 git:
   depth: 3
 branches:
@@ -9,5 +11,9 @@ branches:
 d:
   - dmd
   - ldc
+before_install:
+  - docker run -d -p 26257:26257 cockroachdb/cockroach:v19.1.2 start --insecure
 script:
   - pushd tests && dub -b debug
+  - export IS_COCKROACH=true
+  - dub -b debug

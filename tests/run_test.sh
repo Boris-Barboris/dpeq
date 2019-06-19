@@ -14,3 +14,11 @@ export TEST_DATABASE_HOST=127.0.0.1
 export TEST_DATABASE_PORT=5432
 
 dub -b debug
+
+# cockroachdb
+export IS_COCKROACH=true
+export TEST_DATABASE=postgres
+export TEST_DATABASE_HOST=127.0.0.1
+export TEST_DATABASE_PORT=26257
+
+dub -b debug

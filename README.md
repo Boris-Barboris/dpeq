@@ -2,14 +2,13 @@
 
 [![Build Status](https://travis-ci.org/Boris-Barboris/dpeq.svg?branch=master)](https://travis-ci.org/Boris-Barboris/dpeq)
 
-**dpeq** is a low-level library that implements a subset of the client side of 
-PostgreSQL simple and extended query (EQ) protocols. EQ is a stateful message-based binary 
-protocol working on top of TCP\IP or Unix-domain sockets. **dpeq** defines classes
+**dpeq** is a library that implements a subset of PostgreSQL wire protocol and focuses 
+on extended query (EQ) protocol subset. **dpeq** defines classes
 to hold the required state and utility functions, that send and receive protocol
 messages in sensible manner.
 
 **dpeq** is aimed on library developers that write database middleware for
-Postgres.
+Postgres or CockroachDB.
 
 Here is a list of good links to get yourself familiar with EQ protocol, wich may
 help you to understand the nature of the messages being passed:   

@@ -69,10 +69,12 @@ class PSQLConnectionTests
     DebugSocket transport;
     PasswordAuthenticator password;
     string[string] startupParams;
+    bool isCockroach;
 
     @BeforeEach
     public void setUp()
     {
+        isCockroach = environment.get("IS_COCKROACH", "false").to!bool;
         transport = new DebugSocket(
             ConnectParameters(
                 environment.get("TEST_DATABASE_HOST", "localhost"),
@@ -96,8 +98,11 @@ class PSQLConnectionTests
         assertTrue(!connection.closed);
         assertTrue(connection.authenticated);
         assertTrue(connection.isOpen);
-        assertTrue(connection.backendKeyData.processId != 0);
-        assertTrue(connection.backendKeyData.cancellationKey != 0);
+        if (!isCockroach)
+        {
+            assertTrue(connection.backendKeyData.processId != 0);
+            assertTrue(connection.backendKeyData.cancellationKey != 0);
+        }
         assertEquals(TransactionStatus.IDLE, connection.lastTransactionStatus);
         writeln("Parameter statuses: ", connection.parameterStatuses);
     }
@@ -164,7 +169,6 @@ class PSQLConnectionTests
                 {
                     NoticeOrError error = NoticeOrError.parse(msg.data);
                     assertEquals("ERROR", error.severity);
-                    assertEquals("ERROR", error.severityV);
                     assertEquals("42883", error.code[]);
                     return PollAction.BREAK;
                 }
@@ -204,7 +208,7 @@ class PSQLConnectionTests
     {
         RawFrontendMessage query = buildQueryMessage(
             "BEGIN;
-            CREATE TABLE tempTable (pk integer PRIMARY KEY);");
+            CREATE TABLE temptable (pk integer PRIMARY KEY);");
         connection.sendMessage(query);
 
         CommandComplete commandComplele;
@@ -262,6 +266,8 @@ class PSQLConnectionTests
     @Test
     void testQueryCancellation()
     {
+        if (isCockroach)
+            return;
         RawFrontendMessage query = buildQueryMessage("SELECT pg_sleep(10)");
         connection.sendMessage(query);
         Thread.sleep(msecs(50));
@@ -288,6 +294,13 @@ class PSQLConnectionTests
     {
         int[] paramTypes = [KnownTypeOID.INT, KnownTypeOID.REAL,
             KnownTypeOID.BIGINT, KnownTypeOID.UUID, KnownTypeOID.TEXT];
+        int[] returnTypes = paramTypes.dup;
+        if (isCockroach)
+        {
+            // cockroachdb integer is bigint, and read->double is unexplainable.
+            returnTypes[0] = KnownTypeOID.BIGINT;
+            returnTypes[1] = KnownTypeOID.DOUBLE_PRECISION;
+        }
         RawFrontendMessage fmsg = buildParseMessage(
             "", "SELECT $1::integer, $2::real, $3::bigint, $4::uuid, $5::text", paramTypes);
         connection.sendMessage(fmsg);
@@ -332,7 +345,7 @@ class PSQLConnectionTests
 
         assertEquals(PollResult.POLL_CALLBACK_BREAK, connection.pollMessages(poller));
         assertEquals(paramTypes, paramDescr.paramTypeOIDs);
-        assertEquals(paramTypes, rowDescr.fieldDescriptions.map!(fd => fd.type).array);
+        assertEquals(returnTypes, rowDescr.fieldDescriptions.map!(fd => fd.type).array);
 
         int p1 = 42;
         float p2 = float.infinity;
@@ -391,10 +404,26 @@ class PSQLConnectionTests
         UUID r4;
         string r5;
 
-        deserializePrimitiveField!(int, FormatCode.BINARY)(
-            rows[0].columns[0].isNull, rows[0].columns[0].value, &r1);
-        deserializePrimitiveField!(float, FormatCode.BINARY)(
-            rows[0].columns[1].isNull, rows[0].columns[1].value, &r2);
+        if (!isCockroach)
+        {
+            // postgres
+            deserializePrimitiveField!(int, FormatCode.BINARY)(
+                rows[0].columns[0].isNull, rows[0].columns[0].value, &r1);
+            deserializePrimitiveField!(float, FormatCode.BINARY)(
+                rows[0].columns[1].isNull, rows[0].columns[1].value, &r2);
+        }
+        else
+        {
+            long r1cdb;
+            deserializePrimitiveField!(long, FormatCode.BINARY)(
+                rows[0].columns[0].isNull, rows[0].columns[0].value, &r1cdb);
+            r1 = r1cdb.to!int;
+
+            double r2cdb;
+            deserializePrimitiveField!(double, FormatCode.BINARY)(
+                rows[0].columns[1].isNull, rows[0].columns[1].value, &r2cdb);
+            r2 = r2cdb.to!float;
+        }
         deserializePrimitiveField!(long, FormatCode.BINARY)(
             rows[0].columns[2].isNull, rows[0].columns[2].value, &r3);
         deserializeUUIDField!(FormatCode.BINARY)(
@@ -412,6 +441,8 @@ class PSQLConnectionTests
     @Test
     void testListenNotify()
     {
+        if (isCockroach)
+            return;
         DebugPSQLConnection connection2;
         ITransport transport2;
         transport2 = transport.duplicate();
@@ -444,6 +475,9 @@ class PSQLConnectionTests
     @Test
     void testCopyMode()
     {
+        if (isCockroach)
+            return;
+
         RawFrontendMessage query = buildQueryMessage(
             "CREATE TABLE IF NOT EXISTS raw_ints(row1 integer);
              DELETE FROM raw_ints;

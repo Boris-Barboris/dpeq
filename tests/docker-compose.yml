@@ -1,8 +1,13 @@
-db:
+postgres:
   image: postgres:9.6-alpine
-  restart: unless-stopped
   ports:
   - "127.0.0.1:5432:5432/tcp"
   environment:
     POSTGRES_USER: root
     POSTGRES_PASSWORD: r00tme
+
+cockroach:
+  image: cockroachdb/cockroach:v19.1.2
+  command: start --insecure
+  ports:
+  - "127.0.0.1:26257:26257/tcp"
