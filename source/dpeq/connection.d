@@ -148,6 +148,7 @@ class PSQLConnection
         RawBackendMessage firstResponse = receiveBackendMessage(m_transport);
         if (firstResponse.type == BackendMessageType.ErrorResponse)
             throw new PSQLErrorResponseException(NoticeOrError.parse(firstResponse.data));
+        enforce!PSQLProtocolException(firstResponse.type == BackendMessageType.Authentication);
         AuthenticationMessage authResponse =
             AuthenticationMessage.parse(firstResponse.data);
         if (authResponse.protocol != AUTHENTICATION_SUCCESS)
