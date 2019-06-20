@@ -13,9 +13,11 @@ d:
   - ldc
 before_install:
   - docker run -d -p 26257:26257 cockroachdb/cockroach:v19.1.2 start --insecure
+  - sleep 7
 script:
   - pushd tests && dub -b debug
+  - export TEST_USER=root
+  - export TEST_DATABASE_HOST=127.0.0.1
   - export IS_COCKROACH=true
   - export TEST_DATABASE_PORT=26257
-  - sleep 5
   - dub -b debug

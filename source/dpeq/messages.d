@@ -65,18 +65,14 @@ struct AuthenticationMessage
 {
     int protocol;
     ubyte[] data;
-}
 
-AuthenticationMessage receiveAuthenticationMessage(IOpenTransport transport)
-{
-    RawBackendMessage rawMessage = receiveBackendMessage(transport);
-    enforce!PSQLProtocolException(
-        rawMessage.type == BackendMessageType.Authentication,
-        "expected Authentication message, received " ~ rawMessage.type);
-    AuthenticationMessage res;
-    res.protocol = rawMessage.data.consumePrimitive!int();
-    res.data = rawMessage.data;
-    return res;
+    static AuthenticationMessage parse(ubyte[] data)
+    {
+        AuthenticationMessage res;
+        res.protocol = data.consumePrimitive!int();
+        res.data = data;
+        return res;
+    }
 }
 
 

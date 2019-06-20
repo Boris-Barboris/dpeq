@@ -145,9 +145,13 @@ class PSQLConnection
         scope(failure) close(false);
         enforceSSLPolicy(m_transport);
         m_transport.send(buildStartupMessage(startupParams));
-        AuthenticationMessage firstResponse = receiveAuthenticationMessage(m_transport);
-        if (firstResponse.protocol != AUTHENTICATION_SUCCESS)
-            auth.authenticate(m_transport, firstResponse, startupParams);
+        RawBackendMessage firstResponse = receiveBackendMessage(m_transport);
+        if (firstResponse.type == BackendMessageType.ErrorResponse)
+            throw new PSQLErrorResponseException(NoticeOrError.parse(firstResponse.data));
+        AuthenticationMessage authResponse =
+            AuthenticationMessage.parse(firstResponse.data);
+        if (authResponse.protocol != AUTHENTICATION_SUCCESS)
+            auth.authenticate(m_transport, authResponse, startupParams);
 
         PollAction pollStarupMessages(PSQLConnection that, RawBackendMessage msg)
         {
