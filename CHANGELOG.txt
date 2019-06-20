@@ -1,4 +1,4 @@
-wip:    v0.4.1 -> v0.5.0
+18.06.2018:    v0.4.1 -> v0.5.0
     Breaking changes:
     - OID alias removed from constants.d.
     - result.d renamed to messages.d.
@@ -15,7 +15,9 @@ wip:    v0.4.1 -> v0.5.0
     - PSQLConnection is no longer a template. All logging was removed.
     - PSQLConnection is now final.
     - PSQLConnection rewritten from scratch.
-    - Authentication is now performed by interface instance.
+    - Authentication is now performed by separate interface instance.
+    - all templated type mapping code removed.
+    - COPY messages supported.
 
 16.10.2018:  v0.4.0 -> v0.4.1
     Breaking changes:
