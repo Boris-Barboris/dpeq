@@ -1,7 +1,7 @@
 /**
 Default socket type for Connection.
 
-Copyright: Copyright Boris-Barboris 2017.
+Copyright: Copyright Boris-Barboris 2017-2019.
 License: MIT
 Authors: Boris-Barboris
 */
@@ -62,6 +62,7 @@ struct ConnectParameters
     /// destination hostname, IPv4 address or unix socket path. Example:
     /// /var/run/postgresql/.s.PGSQL.5432
     string host;
+    /// TCP port number, ignored for Unix sockets
     ushort port = 5432;
 }
 
@@ -95,6 +96,7 @@ class StdSocketTransport: ITransport
         }
         else
         {
+            // FIXME: only IPv4 addresses are handled by this code.
             m_address = new InternetAddress(params.host, params.port);
             m_socket = new TcpSocket();
             m_socket.setKeepAlive(1200, 1200);
