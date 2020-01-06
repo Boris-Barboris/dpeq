@@ -23,16 +23,15 @@ interface IOpenTransport
 {
     /// Send 'data' buffer as a whole to the socket/operating system or throw.
     /// Implementation MUST handle all looping and signal/interrupt handling logic.
-    /// Any exception thrown from 'send' will cause 'close' call from PSQLConnection.
     void send(const(ubyte)[] data);
 
     /// Receive 'dest.length' bytes from the underlying connection or throw.
-    /// Any exception thrown from 'receive' will cause 'close' call from PSQLConnection.
     void receive(ubyte[] dest);
 }
 
 /// Generic transport interface, used by PSQLConnection object.
 /// Implementations may choose to support asynchronous IO (vibe-d).
+/// Any exception thrown from 'send' or 'receive' will cause 'close' call from PSQLConnection.
 interface ITransport: IOpenTransport
 {
     /// Construct and open connection to the same endpoint. This call
@@ -57,7 +56,8 @@ interface ITransport: IOpenTransport
 }
 
 
-struct ConnectParameters
+/// Connection parameters for StdSocketTransport.
+struct StdConnectParameters
 {
     /// destination hostname, IPv4 address or unix socket path. Example:
     /// /var/run/postgresql/.s.PGSQL.5432
@@ -72,7 +72,7 @@ class StdSocketTransport: ITransport
 {
     private
     {
-        const ConnectParameters m_connectParams;
+        const StdConnectParameters m_connectParams;
         Socket m_socket;
         Address m_address;
     }
@@ -80,7 +80,7 @@ class StdSocketTransport: ITransport
     /// Underlying socket instance.
     @property Socket socket() { return m_socket; }
 
-    this(ConnectParameters params)
+    this(StdConnectParameters params)
     {
         m_connectParams = params;
         enforce(params.host.length > 0, "empty host address string");

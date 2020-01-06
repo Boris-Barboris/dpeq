@@ -21,3 +21,4 @@ export TEST_DATABASE=postgres
 export TEST_DATABASE_PORT=26257
 
 dub -b debug
+

@@ -56,7 +56,7 @@ final class PasswordAuthenticator: IPSQLAuthenticator
                 transport.send(buildPasswordMessage(m_password).data);
                 break;
             case AuthenticationProtocol.MD5_PASSWORD:
-                assert("user" in startupParameters, "No 'user' in startupParameters");
+                enforce!PSQLClientException("user" in startupParameters, "No 'user' in startupParameters");
                 enforce!PSQLProtocolException(firstAuthResponse.data.length == 4);
                 ubyte[4] salt = firstAuthResponse.data[];
                 transport.send(

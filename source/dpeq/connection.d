@@ -237,8 +237,9 @@ class PSQLConnection
     /// to this callback during 'pollMessages' call.
     NoticeCallback noticeCallback;
 
-    /// ParameterStatus messages will be passed
-    /// to this callback during 'pollMessages' call.
+    /// ParameterStatus messages will be passed to this callback during 'pollMessages' call.
+    /// For example, 'server_encoding', 'server_version' and 'TimeZone' parameter values are pushed
+    /// to client after successfull authentication.
     /// This callback cannot interrupt 'pollMessages' loop.
     ParameterStatusCallback parameterStatusCallback;
 
@@ -247,7 +248,7 @@ class PSQLConnection
       2). pollCallback returns BREAK.
       3). notificationCallback returns BREAK.
       4). noticeCallback returns BREAK.
-      5). some callback throws.
+      5). some callback throws. In this case connection will be closed.
     */
     final PollResult pollMessages(scope PollCallback pollCallback)
     {

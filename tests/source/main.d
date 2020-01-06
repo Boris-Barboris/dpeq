@@ -27,7 +27,7 @@ import dpeq;
 
 final class DebugSocket: StdSocketTransport
 {
-    this(ConnectParameters params)
+    this(StdConnectParameters params)
     {
         super(params);
     }
@@ -76,7 +76,7 @@ class PSQLConnectionTests
     {
         isCockroach = environment.get("IS_COCKROACH", "false").to!bool;
         transport = new DebugSocket(
-            ConnectParameters(
+            StdConnectParameters(
                 environment.get("TEST_DATABASE_HOST", "localhost"),
                 environment.get("TEST_DATABASE_PORT", "5432").to!ushort
             ));
@@ -272,15 +272,18 @@ class PSQLConnectionTests
         connection.sendMessage(query);
         Thread.sleep(msecs(50));
         connection.cancelRequest();
-        try
-        {
-            connection.pollMessages(null);
-        }
-        catch (PSQLErrorResponseException perex)
-        {
-            assertEquals("57014", perex.error.code[]);
-            assertEquals("canceling statement due to user request", perex.error.message);
-        }
+        PollResult pr = connection.pollMessages((con, msg)
+            {
+                if (msg.type == BackendMessageType.ErrorResponse)
+                {
+                    NoticeOrError error = NoticeOrError.parse(msg.data);
+                    assertEquals("57014", error.code[]);
+                    assertEquals("canceling statement due to user request", error.message);
+                    return PollAction.BREAK;
+                }
+                return PollAction.CONTINUE;
+            });
+        assertEquals(PollResult.POLL_CALLBACK_BREAK, pr);
     }
 
     @Test

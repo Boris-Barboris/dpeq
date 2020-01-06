@@ -729,6 +729,8 @@ RawFrontendMessage buildParseMessage(
     return res;
 }
 
+
+/// Query parameter value, it's desired format code and serializer for that format code and data type.
 struct BindParam
 {
     const void* value;
