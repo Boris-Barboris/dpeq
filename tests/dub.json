@@ -3,7 +3,7 @@
     "description": "Tests for dpeq",
     "license": "MIT",
     "targetType": "executable",
-    "copyright": "Copyright © 2017-2019 Boris-Barboris",
+    "copyright": "Copyright © 2017-2020 Boris-Barboris",
     "homepage": "https://github.com/Boris-Barboris/dpeq/",
     "authors": ["Boris-Barboris"],
     "dependencies":
