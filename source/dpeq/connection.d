@@ -56,7 +56,7 @@ alias ParameterStatusCallback = void delegate(
 /// Callback of this signature is invoked when any known
 /// message besides NotificationResponse, NoticeResponse, ParameterStatus or
 /// ReadyForQuery is received inside pollMessages call. Any Throwable thrown
-/// will close the connection will be rethrown from pollMessages.
+/// will close the connection and will be rethrown from pollMessages.
 alias PollCallback = PollAction delegate(
     PSQLConnection receiver, RawBackendMessage message);
 
@@ -256,6 +256,8 @@ class PSQLConnection
         scope(failure) close();
         while(true)
         {
+            // This materialized whole message in memory. Not suitable for
+            // large objects, but that is just and unsupported edge case.
             RawBackendMessage msg = receiveMessage();
             switch (msg.type)
             {
