@@ -2,7 +2,7 @@
 Structures that describe messages protocol messages.
 Functions that (de)serialize end send/receive them.
 
-Copyright: Boris-Barboris 2017-2019.
+Copyright: Boris-Barboris 2017-2020.
 License: MIT
 Authors: Boris-Barboris
 */

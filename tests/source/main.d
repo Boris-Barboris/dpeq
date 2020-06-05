@@ -1,7 +1,7 @@
 /**
 Simple tests that serve as an example.
 
-Copyright: Copyright Boris-Barboris 2017-2019.
+Copyright: Copyright Boris-Barboris 2017-2020.
 License: MIT
 Authors: Boris-Barboris
 */

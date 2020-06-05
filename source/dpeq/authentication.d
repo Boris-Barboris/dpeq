@@ -1,7 +1,7 @@
 /**
 Postgres authentication interface and basic implementations.
 
-Copyright: Boris-Barboris 2017-2019.
+Copyright: Boris-Barboris 2017-2020.
 License: MIT
 Authors: Boris-Barboris
 */
